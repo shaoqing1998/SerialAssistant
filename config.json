@@ -1,0 +1,22 @@
+{
+    "serial": {
+        "port": "（无可用端口）",
+        "baudrate": 115200,
+        "bytesize": 8,
+        "parity": "N",
+        "stopbits": 1,
+        "timeout": 0.1
+    },
+    "ui": {
+        "window_width": 1100,
+        "window_height": 650,
+        "font_family": "Consolas",
+        "font_size": 10,
+        "max_log_lines": 5000
+    },
+    "send": {
+        "hex_mode": false,
+        "add_newline": true,
+        "newline_type": "\\r\\n"
+    }
+}
