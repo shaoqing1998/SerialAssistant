@@ -1,678 +1,775 @@
 """
-main.py - 串口调试助手主入口 & 主窗口 UI
-技术栈：Python + PySide6 + pyserial
+main.py - 串口调试助手 v1.6
 """
 
 import sys
+import os
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 from datetime import datetime
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QHBoxLayout, QVBoxLayout, QSplitter,
+    QHBoxLayout, QVBoxLayout, QGridLayout,
     QComboBox, QPushButton, QLabel,
-    QTextEdit, QStatusBar, QGroupBox,
-    QCheckBox, QToolBar, QSizePolicy,
-    QMessageBox, QFrame
+    QTextEdit, QCheckBox, QSizePolicy,
+    QMessageBox, QSpinBox, QStyledItemDelegate,
+    QInputDialog,
 )
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon, QAction
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont, QMouseEvent
 
 from config import load_config, save_config
 from serial_manager import SerialManager
-from log_viewer import LogViewer
 from filter_manager import FilterManager
 
 
-# ══════════════════════════════════════════════
-# 全局样式表
-# ══════════════════════════════════════════════
-GLOBAL_STYLE = """
+# ── 全局对齐边距
+_M = 10   # px
+
+# 选项区宽度：列0(72)+sp(6)+列1(64)+sp(6)+ms(20) = 168px，留余量到 176px
+_OPTS_W = 176
+# 按钮宽度
+_BTN_W = 72
+# 筛选栏右侧容器宽度 = opts + spacing + btns
+_RIGHT_W = _OPTS_W + 8 + _BTN_W   # = 250px
+
+
+class _CenterDelegate(QStyledItemDelegate):
+    """让 QComboBox 下拉列表项居中"""
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.displayAlignment = Qt.AlignmentFlag.AlignCenter
+
+
+class _BaudComboBox(QComboBox):
+    """
+    波特率下拉框：
+    - 不使用 setEditable，避免 lineEdit 拦截鼠标事件
+    - 重写 paintEvent 绘制居中文字
+    - 重写 mousePressEvent 点击任何位置都弹出下拉
+    """
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.showPopup()
+        else:
+            super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        from PySide6.QtWidgets import QStylePainter, QStyleOptionComboBox, QStyle
+        painter = QStylePainter(self)
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        # 清空默认文字，避免重复绘制
+        opt.currentText = ""
+        # 画框体（含下拉箭头），不画文字
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt)
+        # 在整个控件矩形内居中绘制文字（下拉箭头独立绘制，不影响视觉居中）
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.currentText())
+
+
+STYLE = """
+* { outline: none; }
+
 QMainWindow, QWidget {
-    background-color: #2d2d2d;
-    color: #d4d4d4;
-    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    background-color: #eef0f3;
+    color: #1f2937;
+    font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
     font-size: 13px;
 }
 
 /* ── 下拉框 ── */
 QComboBox {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 4px 8px;
-    min-width: 100px;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 0 8px 0 8px;
+    min-height: 28px;
+    color: #1f2937;
+    font-size: 13px;
+    selection-background-color: #dbeafe;
 }
-QComboBox:hover {
-    border-color: #4ec9b0;
-}
+QComboBox:hover  { background: #f3f4f6; border-color: #9ca3af; }
+QComboBox:focus  { border-color: #3b82f6; }
 QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 18px;
     border: none;
-    width: 20px;
+}
+QComboBox::down-arrow {
+    width: 8px; height: 5px;
+    image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><polygon points='0,0 8,0 4,5' fill='%236b7280'/></svg>");
 }
 QComboBox QAbstractItemView {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    selection-background-color: #094771;
-    border: 1px solid #555555;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    selection-background-color: #dbeafe;
+    selection-color: #1d4ed8;
+    padding: 2px;
+    outline: none;
 }
 
 /* ── 按钮基础 ── */
 QPushButton {
-    background-color: #3c3c3c;
-    color: #d4d4d4;
-    border: 1px solid #555555;
-    border-radius: 4px;
-    padding: 5px 14px;
-    min-width: 72px;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    color: #374151;
+    font-size: 13px;
+    padding: 0 12px;
+    min-height: 28px;
+    min-width: 52px;
 }
-QPushButton:hover {
-    background-color: #4a4a4a;
-    border-color: #888888;
-}
-QPushButton:pressed {
-    background-color: #2a2a2a;
-}
-QPushButton:disabled {
-    color: #666666;
-    border-color: #444444;
-    background-color: #333333;
-}
+QPushButton:hover   { background: #f0f4ff; border-color: #93c5fd; color: #1d4ed8; }
+QPushButton:pressed { background: #dbeafe; }
+QPushButton:disabled { background: #f3f4f6; border-color: #e5e7eb; color: #d1d5db; }
 
-/* ── 绿色连接按钮 ── */
-QPushButton#btn_connect {
-    background-color: #2d6a2d;
-    color: #ffffff;
-    border: 1px solid #3a8a3a;
-    font-weight: bold;
+QPushButton#BtnConnect {
+    background: #2563eb; border: none; border-radius: 6px;
+    color: #fff; font-weight: 600; min-height: 28px; min-width: 80px; padding: 0 14px;
 }
-QPushButton#btn_connect:hover {
-    background-color: #3a8a3a;
-    border-color: #4ec94e;
-}
-QPushButton#btn_connect:pressed {
-    background-color: #1e4d1e;
-}
+QPushButton#BtnConnect:hover   { background: #3b82f6; }
+QPushButton#BtnConnect:pressed { background: #1d4ed8; }
 
-/* ── 红色断开按钮 ── */
-QPushButton#btn_disconnect {
-    background-color: #6a2d2d;
-    color: #ffffff;
-    border: 1px solid #8a3a3a;
-    font-weight: bold;
+QPushButton#BtnDisconnect {
+    background: #6b7280; border: none; border-radius: 6px;
+    color: #fff; font-weight: 600; min-height: 28px; min-width: 80px; padding: 0 14px;
 }
-QPushButton#btn_disconnect:hover {
-    background-color: #8a3a3a;
-    border-color: #c94e4e;
-}
-QPushButton#btn_disconnect:pressed {
-    background-color: #4d1e1e;
-}
+QPushButton#BtnDisconnect:hover   { background: #9ca3af; }
+QPushButton#BtnDisconnect:pressed { background: #4b5563; }
 
-/* ── 发送按钮（绿色） ── */
-QPushButton#btn_send {
-    background-color: #2d6a2d;
-    color: #ffffff;
-    border: 1px solid #3a8a3a;
-    font-weight: bold;
-    min-width: 80px;
-    padding: 6px 16px;
+/* 发送/清空按钮：min-height/min-width 清零，由 setFixedHeight 控制 */
+QPushButton#BtnSend {
+    background: #16a34a; border: none; border-radius: 6px;
+    color: #fff; font-weight: 600; padding: 0;
+    min-height: 0; min-width: 0;
 }
-QPushButton#btn_send:hover {
-    background-color: #3a8a3a;
-    border-color: #4ec94e;
-}
-QPushButton#btn_send:pressed {
-    background-color: #1e4d1e;
-}
-QPushButton#btn_send:disabled {
-    background-color: #333333;
-    color: #666666;
-    border-color: #444444;
-}
+QPushButton#BtnSend:hover   { background: #22c55e; }
+QPushButton#BtnSend:pressed { background: #15803d; }
+QPushButton#BtnSend:disabled { background: #d1fae5; color: #6ee7b7; border: none; }
 
-/* ── 清空按钮 ── */
-QPushButton#btn_clear {
-    background-color: #3c3c3c;
-    color: #aaaaaa;
-    border: 1px solid #555555;
-    min-width: 60px;
+QPushButton#BtnClear {
+    background: #ffffff; border: 1px solid #d1d5db; border-radius: 6px;
+    color: #6b7280; padding: 0;
+    min-height: 0; min-width: 0;
 }
-QPushButton#btn_clear:hover {
-    background-color: #4a4a4a;
-    color: #d4d4d4;
-}
+QPushButton#BtnClear:hover { background: #fef3c7; border-color: #fbbf24; color: #b45309; }
 
-/* ── 刷新端口按钮 ── */
-QPushButton#btn_refresh {
-    background-color: #3c3c3c;
-    color: #4ec9b0;
-    border: 1px solid #555555;
-    min-width: 60px;
+QPushButton#BtnRefilter {
+    background: #ffffff; border: 1px solid #d1d5db; border-radius: 6px;
+    color: #374151; min-height: 26px; padding: 0 10px; font-size: 12px;
 }
-QPushButton#btn_refresh:hover {
-    background-color: #4a4a4a;
-    border-color: #4ec9b0;
-}
+QPushButton#BtnRefilter:hover { background: #faf5ff; border-color: #c084fc; color: #7c3aed; }
+QPushButton#BtnRefilter:disabled { background: #f3f4f6; border-color: #e5e7eb; color: #d1d5db; }
 
-/* ── 发送输入框 ── */
-QTextEdit#send_edit {
-    background-color: #1e1e1e;
-    color: #d4d4d4;
-    border: 1px solid #3c3c3c;
-    font-family: "Consolas", "Courier New", monospace;
-    font-size: 11px;
+/* 隐藏/显示发送区（正方形 28×28） */
+QPushButton#BtnToggleSend {
+    background: transparent; border: none; border-radius: 4px;
+    color: #9ca3af; font-size: 14px;
+    min-width: 28px; max-width: 28px;
+    min-height: 28px; max-height: 28px;
+    padding: 0;
 }
-QTextEdit#send_edit:focus {
-    border-color: #4ec9b0;
-}
+QPushButton#BtnToggleSend:hover { background: #e5e7eb; color: #2563eb; }
 
-/* ── GroupBox ── */
-QGroupBox {
-    border: 1px solid #3c3c3c;
-    border-radius: 4px;
-    margin-top: 8px;
-    padding-top: 4px;
-    color: #aaaaaa;
+QPushButton#BtnTabClose {
+    background: transparent; border: none; border-radius: 3px;
+    color: #d1d5db; font-size: 11px; font-weight: 700;
+    min-width: 14px; max-width: 14px; min-height: 14px; max-height: 14px; padding: 0;
+}
+QPushButton#BtnTabClose:hover { background: #fee2e2; color: #dc2626; }
+
+/* ── TabWidget：无边框无灰线 ── */
+QTabWidget { background: transparent; border: none; }
+QTabWidget::pane { border: none; background: transparent; margin: 0; padding: 0; }
+QTabBar { background: transparent; border: none; qproperty-drawBase: 0; }
+QTabBar::tab {
+    background: transparent;
+    color: #6b7280;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 5px 0px 5px 0px;
+    margin: 0 8px 0 0;
+    min-width: 0px;
     font-size: 12px;
 }
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    padding: 0 6px;
-    left: 8px;
+QTabBar::tab:selected {
+    color: #2563eb;
+    border-bottom: 2px solid transparent;
+    font-weight: 600;
+}
+QTabBar::tab:hover:!selected { color: #3b82f6; }
+
+/* ── 文本框 ── */
+QTextEdit {
+    background: #ffffff;
+    color: #1e293b;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    selection-background-color: #bfdbfe;
+    selection-color: #1e3a8a;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
 }
 
-/* ── 标签 ── */
-QLabel {
-    color: #aaaaaa;
+QWidget#FilterBar { background: transparent; }
+
+/* ── 关键词输入框 ── */
+QLineEdit#KwEdit {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 0 9px;
+    min-height: 26px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    color: #1f2937;
 }
-QLabel#lbl_status_connected {
-    color: #4ec94e;
-    font-weight: bold;
+QLineEdit#KwEdit:focus    { border-color: #3b82f6; }
+QLineEdit#KwEdit:disabled { background: #f3f4f6; color: #d1d5db; border-color: #e5e7eb; }
+
+QTextEdit#SendEdit {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    color: #1f2937;
+    padding: 4px 6px;
 }
-QLabel#lbl_status_disconnected {
-    color: #f44747;
-    font-weight: bold;
+QTextEdit#SendEdit:focus { border-color: #3b82f6; }
+
+QCheckBox {
+    color: #374151; spacing: 5px; font-size: 12px; background: transparent;
 }
+QCheckBox::indicator {
+    width: 14px; height: 14px;
+    border: 1.5px solid #9ca3af; border-radius: 3px; background: #ffffff;
+}
+QCheckBox::indicator:checked  { background: #2563eb; border-color: #2563eb; }
+QCheckBox::indicator:hover    { border-color: #3b82f6; }
+QCheckBox:disabled            { color: #d1d5db; }
+QCheckBox::indicator:disabled { background: #f3f4f6; border-color: #e5e7eb; }
+
+QLabel { color: #374151; background: transparent; }
+QLabel#DotOn  { color: #16a34a; font-size: 13px; }
+QLabel#DotOff { color: #d1d5db; font-size: 13px; }
 
 /* ── 状态栏 ── */
 QStatusBar {
-    background-color: #007acc;
-    color: #ffffff;
-    font-size: 12px;
+    background: #eef0f3; color: #6b7280;
+    font-size: 12px; border: none; min-height: 22px;
 }
-QStatusBar QLabel {
-    color: #ffffff;
-    padding: 0 8px;
-}
+QStatusBar::item { border: none; }
+QStatusBar QLabel { color: #6b7280; padding: 0 6px; font-size: 12px; background: transparent; border: none; }
 
-/* ── 复选框 ── */
-QCheckBox {
-    color: #aaaaaa;
-    spacing: 6px;
+QSpinBox {
+    background: #ffffff; border: 1px solid #d1d5db; border-radius: 6px;
+    padding: 0 4px; min-height: 24px; color: #1f2937; font-size: 12px;
 }
-QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
-    border: 1px solid #555555;
-    border-radius: 2px;
-    background-color: #3c3c3c;
-}
-QCheckBox::indicator:checked {
-    background-color: #4ec9b0;
-    border-color: #4ec9b0;
-}
+QSpinBox:focus    { border-color: #3b82f6; }
+QSpinBox:disabled { background: #f3f4f6; color: #d1d5db; border-color: #e5e7eb; }
+QSpinBox::up-button, QSpinBox::down-button { width: 14px; border: none; background: transparent; }
 
-/* ── 分割线 ── */
-QFrame[frameShape="4"], QFrame[frameShape="5"] {
-    color: #3c3c3c;
+QScrollBar:vertical   { background: transparent; width: 6px; }
+QScrollBar:horizontal { background: transparent; height: 6px; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #d1d5db; border-radius: 3px; min-height: 20px;
 }
-
-/* ── Splitter ── */
-QSplitter::handle {
-    background-color: #3c3c3c;
-    width: 3px;
-    height: 3px;
-}
-QSplitter::handle:hover {
-    background-color: #4ec9b0;
-}
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover { background: #3b82f6; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
 """
 
 
-# ══════════════════════════════════════════════
-# 主窗口
-# ══════════════════════════════════════════════
 class MainWindow(QMainWindow):
 
-    BAUDRATES = [
-        "1200", "2400", "4800", "9600", "14400",
-        "19200", "38400", "57600", "115200",
-        "230400", "460800", "921600"
-    ]
+    BAUDRATES = ["1200","2400","4800","9600","14400",
+                 "19200","38400","57600","115200",
+                 "230400","460800","921600"]
 
     def __init__(self):
         super().__init__()
-        self._config = load_config()
+        self._cfg = load_config()
         self._serial = SerialManager()
-        self._is_connected = False
+        self._connected = False
+        self._start_time: datetime | None = None
+        self._last_rx = self._last_tx = 0
+        self._known_ports: list[str] = []
+        self._send_visible = True
 
-        self._init_ui()
-        self._connect_signals()
-        self._refresh_ports()
+        self._build_ui()
+        self._wire()
 
-        # 定时刷新状态栏计数（每秒）
-        self._status_timer = QTimer(self)
-        self._status_timer.timeout.connect(self._update_counters)
-        self._status_timer.start(1000)
+        self._port_timer = QTimer(self)
+        self._port_timer.timeout.connect(self._scan_ports)
+        self._port_timer.start(800)
 
-    # ── 初始化 UI ─────────────────────────────
+        self._stat_timer = QTimer(self)
+        self._stat_timer.timeout.connect(self._refresh_stat)
+        self._stat_timer.start(1000)
 
-    def _init_ui(self):
-        self.setWindowTitle("串口调试助手 - SerialAssistant v1.0")
-        w = self._config["ui"]["window_width"]
-        h = self._config["ui"]["window_height"]
-        self.resize(w, h)
-        self.setMinimumSize(900, 500)
+        self._scan_ports()
 
-        # 中央容器
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4)
-        main_layout.setSpacing(6)
+    # ══ 构建 UI ════════════════════════════════
 
-        # 1. 顶部串口设置栏
-        main_layout.addWidget(self._build_toolbar())
+    def _build_ui(self):
+        self.setWindowTitle("串口调试助手  v1.6")
+        self.resize(self._cfg["ui"]["window_width"],
+                    self._cfg["ui"]["window_height"])
+        self.setMinimumSize(900, 520)
 
-        # 2. 分割线
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        main_layout.addWidget(line)
+        root = QWidget()
+        self.setCentralWidget(root)
+        vbox = QVBoxLayout(root)
+        vbox.setContentsMargins(_M, 8, _M, 4)
+        vbox.setSpacing(4)
 
-        # 3. 主体区域（左：日志 60%，右：发送 40%）
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
-
-        # 左侧日志区
-        self._log_viewer = LogViewer(self._config)
-        log_group = QGroupBox("接收日志")
-        log_layout = QVBoxLayout(log_group)
-        log_layout.setContentsMargins(4, 8, 4, 4)
-        log_layout.addWidget(self._log_viewer)
-        splitter.addWidget(log_group)
-
-        # 右侧发送区
-        splitter.addWidget(self._build_send_panel())
-
-        # 设置比例 60:40
-        splitter.setStretchFactor(0, 6)
-        splitter.setStretchFactor(1, 4)
-        main_layout.addWidget(splitter, stretch=1)
-
-        # 4. 状态栏
-        self._build_statusbar()
-
-    def _build_toolbar(self) -> QWidget:
-        """构建顶部串口设置栏"""
-        bar = QWidget()
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        # 端口标签 + 下拉框
-        layout.addWidget(QLabel("端口:"))
-        self._combo_port = QComboBox()
-        self._combo_port.setMinimumWidth(110)
-        self._combo_port.setToolTip("选择串口端口")
-        layout.addWidget(self._combo_port)
-
-        # 刷新端口按钮
-        self._btn_refresh = QPushButton("⟳ 刷新")
-        self._btn_refresh.setObjectName("btn_refresh")
-        self._btn_refresh.setToolTip("重新扫描可用串口")
-        self._btn_refresh.setFixedWidth(70)
-        layout.addWidget(self._btn_refresh)
-
-        # 分隔
-        layout.addWidget(self._make_vsep())
-
-        # 波特率
-        layout.addWidget(QLabel("波特率:"))
-        self._combo_baud = QComboBox()
-        self._combo_baud.addItems(self.BAUDRATES)
-        self._combo_baud.setCurrentText(
-            str(self._config["serial"]["baudrate"])
+        vbox.addWidget(self._make_toolbar())
+        self._filter_mgr = FilterManager(
+            self._cfg,
+            h_margin=0,
+            toggle_send_callback=self._toggle_send_area
         )
-        self._combo_baud.setToolTip("选择波特率")
-        layout.addWidget(self._combo_baud)
+        vbox.addWidget(self._filter_mgr, stretch=1)
+        self._send_area = self._make_send_area()
+        vbox.addWidget(self._send_area)
+        self._make_statusbar()
 
-        # 分隔
-        layout.addWidget(self._make_vsep())
+    # ── 顶部工具栏 ────────────────────────────
+    def _make_toolbar(self) -> QWidget:
+        bar = QWidget()
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
 
-        # 连接 / 断开按钮
-        self._btn_connect = QPushButton("▶ 连接")
-        self._btn_connect.setObjectName("btn_connect")
-        self._btn_connect.setFixedWidth(90)
+        self._cb_port = QComboBox()
+        self._cb_port.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._cb_port.setMinimumWidth(200)
+        self._cb_port.setToolTip("串口端口（自动实时扫描）")
+        h.addWidget(self._cb_port, stretch=1)
 
-        self._btn_disconnect = QPushButton("■ 断开")
-        self._btn_disconnect.setObjectName("btn_disconnect")
-        self._btn_disconnect.setFixedWidth(90)
-        self._btn_disconnect.setEnabled(False)
+        # 波特率：自定义 ComboBox，点击任何位置都弹出下拉，重写 paintEvent 居中显示
+        self._cb_baud = _BaudComboBox()
+        # 加载自定义波特率（从 config 中读取）
+        custom_bauds = self._cfg.get("serial", {}).get("custom_baudrates", [])
+        all_bauds = sorted(set(int(b) for b in self.BAUDRATES) | set(custom_bauds))
+        for b in all_bauds:
+            self._cb_baud.addItem(str(b))
+        self._cb_baud.addItem("自定义...")
+        # 恢复上次选择
+        saved = str(self._cfg["serial"]["baudrate"])
+        idx = self._cb_baud.findText(saved)
+        if idx >= 0:
+            self._cb_baud.setCurrentIndex(idx)
+        self._cb_baud.setFixedWidth(80)
+        self._cb_baud.setToolTip("波特率（点击选择，可自定义）")
+        self._cb_baud.setItemDelegate(_CenterDelegate(self._cb_baud))
+        self._cb_baud.currentIndexChanged.connect(self._on_baud_changed)
+        h.addWidget(self._cb_baud)
 
-        layout.addWidget(self._btn_connect)
-        layout.addWidget(self._btn_disconnect)
+        self._dot = QLabel("●")
+        self._dot.setObjectName("DotOff")
+        self._dot.setFixedWidth(14)
+        self._dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        h.addWidget(self._dot)
 
-        # 分隔
-        layout.addWidget(self._make_vsep())
-
-        # HEX 显示模式
-        self._chk_hex = QCheckBox("HEX 显示")
-        self._chk_hex.setToolTip("以十六进制格式显示接收数据")
-        layout.addWidget(self._chk_hex)
-
-        # 自动滚动
-        self._chk_autoscroll = QCheckBox("自动滚动")
-        self._chk_autoscroll.setChecked(True)
-        self._chk_autoscroll.setToolTip("接收数据时自动滚动到底部")
-        layout.addWidget(self._chk_autoscroll)
-
-        layout.addStretch()
-
-        # 连接状态指示
-        self._lbl_conn_state = QLabel("● 未连接")
-        self._lbl_conn_state.setObjectName("lbl_status_disconnected")
-        layout.addWidget(self._lbl_conn_state)
+        self._btn_conn = QPushButton("连  接")
+        self._btn_conn.setObjectName("BtnConnect")
+        h.addWidget(self._btn_conn)
 
         return bar
 
-    def _build_send_panel(self) -> QGroupBox:
-        """构建右侧发送面板"""
-        group = QGroupBox("发送")
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(6, 10, 6, 6)
-        layout.setSpacing(6)
+    # ── 发送区 ────────────────────────────────
+    def _make_send_area(self) -> QWidget:
+        """
+        发送区高度 120px，布局：
+        [发送框 stretch=1] | [选项区 固定宽度 _OPTS_W] | [发送/清空按钮 固定高度，宽度撑满]
 
-        # 发送选项行
-        opt_layout = QHBoxLayout()
-        self._chk_hex_send = QCheckBox("HEX 发送")
-        self._chk_hex_send.setToolTip("以十六进制格式解析发送内容（如: 01 02 03）")
-        self._chk_newline = QCheckBox("追加换行 \\r\\n")
-        self._chk_newline.setChecked(
-            self._config["send"].get("add_newline", True)
-        )
-        self._chk_newline.setToolTip("发送时在末尾追加 \\r\\n")
-        opt_layout.addWidget(self._chk_hex_send)
-        opt_layout.addWidget(self._chk_newline)
-        opt_layout.addStretch()
-        layout.addLayout(opt_layout)
+        选项区 4 行，用 addStretch(1) 均匀分布，整体垂直居中
+        发送/清空按钮：固定高度 BTN_H，宽度由 SizePolicy.Expanding 撑满剩余空间
+        """
+        AREA_H = 120
+        area = QWidget()
+        area.setFixedHeight(AREA_H)
 
-        # 发送输入框
+        h = QHBoxLayout(area)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(8)
+
+        # 左：发送输入框（stretch=1）
         self._send_edit = QTextEdit()
-        self._send_edit.setObjectName("send_edit")
-        self._send_edit.setPlaceholderText(
-            "在此输入要发送的内容...\n"
-            "（Ctrl+Enter 快速发送）"
-        )
-        font = QFont("Consolas", 11)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        self._send_edit.setFont(font)
-        layout.addWidget(self._send_edit, stretch=1)
-
-        # 按钮行
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(6)
-
-        self._btn_clear_send = QPushButton("清空输入")
-        self._btn_clear_send.setObjectName("btn_clear")
-        self._btn_clear_send.setFixedWidth(80)
-
-        self._btn_clear_log = QPushButton("清空日志")
-        self._btn_clear_log.setObjectName("btn_clear")
-        self._btn_clear_log.setFixedWidth(80)
-
-        self._btn_send = QPushButton("▶ 发送")
-        self._btn_send.setObjectName("btn_send")
-        self._btn_send.setEnabled(False)
-        self._btn_send.setToolTip("发送数据（Ctrl+Enter）")
-
-        btn_layout.addWidget(self._btn_clear_send)
-        btn_layout.addWidget(self._btn_clear_log)
-        btn_layout.addStretch()
-        btn_layout.addWidget(self._btn_send)
-        layout.addLayout(btn_layout)
-
-        return group
-
-    def _build_statusbar(self):
-        """构建底部状态栏"""
-        sb = self.statusBar()
-
-        self._lbl_status = QLabel("就绪")
-        self._lbl_rx = QLabel("RX: 0 B")
-        self._lbl_tx = QLabel("TX: 0 B")
-        self._lbl_time = QLabel("")
-
-        # 添加分隔符
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.VLine)
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.Shape.VLine)
-
-        sb.addWidget(self._lbl_status, 1)
-        sb.addPermanentWidget(sep1)
-        sb.addPermanentWidget(self._lbl_rx)
-        sb.addPermanentWidget(sep2)
-        sb.addPermanentWidget(self._lbl_tx)
-        sb.addPermanentWidget(sep3)
-        sb.addPermanentWidget(self._lbl_time)
-
-    # ── 信号连接 ──────────────────────────────
-
-    def _connect_signals(self):
-        # 串口管理器信号
-        self._serial.data_received.connect(self._on_data_received)
-        self._serial.error_occurred.connect(self._on_serial_error)
-        self._serial.connection_changed.connect(self._on_connection_changed)
-
-        # 按钮
-        self._btn_connect.clicked.connect(self._do_connect)
-        self._btn_disconnect.clicked.connect(self._do_disconnect)
-        self._btn_refresh.clicked.connect(self._refresh_ports)
-        self._btn_send.clicked.connect(self._do_send)
-        self._btn_clear_send.clicked.connect(self._send_edit.clear)
-        self._btn_clear_log.clicked.connect(self._log_viewer.clear)
-
-        # 复选框
-        self._chk_hex.toggled.connect(self._log_viewer.set_show_hex)
-        self._chk_autoscroll.toggled.connect(self._log_viewer.set_auto_scroll)
-
-        # Ctrl+Enter 快速发送
+        self._send_edit.setObjectName("SendEdit")
+        self._send_edit.setPlaceholderText("输入发送内容…（Ctrl+Enter 发送）")
+        mono = QFont("Consolas", 11)
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        self._send_edit.setFont(mono)
         self._send_edit.installEventFilter(self)
+        h.addWidget(self._send_edit, stretch=1)
 
-    # ── 事件过滤（Ctrl+Enter 发送）────────────
+        # 中：选项区（QGridLayout，第二列左对齐）
+        # 行0: □时间戳    [SpinBox] ms
+        # 行1: □循环发送  [SpinBox] ms
+        # 行2: □HEX显示   □HEX发送
+        # 行3: □回车发送  □追加换行
+        SPIN_W = 64   # SpinBox 宽度（足够显示4位数+上下箭头，修复截断）
+
+        opts_container = QWidget()
+        opts_container.setFixedWidth(_OPTS_W)
+        opts_container.setFixedHeight(AREA_H)
+
+        opts_v = QVBoxLayout(opts_container)
+        opts_v.setContentsMargins(0, 0, 0, 0)
+        opts_v.setSpacing(0)
+        opts_v.addStretch(1)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        grid.setColumnMinimumWidth(0, 72)
+        grid.setColumnStretch(2, 1)
+        ROW_H = 24
+        for r in range(4):
+            grid.setRowMinimumHeight(r, ROW_H)
+
+        # 行0：□时间戳  [SpinBox] ms
+        self._chk_ts = QCheckBox("时间戳")
+        self._spin_ts = QSpinBox()
+        self._spin_ts.setRange(10, 9999); self._spin_ts.setValue(100)
+        self._spin_ts.setFixedWidth(SPIN_W)
+        self._spin_ts.setEnabled(False)
+        self._spin_ts.setToolTip("超时时间：超过此时间无数据则换行")
+        lbl_ts = QLabel("ms"); lbl_ts.setStyleSheet("color:#9ca3af;font-size:12px;")
+        grid.addWidget(self._chk_ts,  0, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(self._spin_ts, 0, 1, Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(lbl_ts,        0, 2, Qt.AlignmentFlag.AlignVCenter)
+
+        # 行1：□循环发送 [SpinBox] ms
+        self._chk_loop = QCheckBox("循环发送")
+        self._spin_ms = QSpinBox()
+        self._spin_ms.setRange(50, 99999); self._spin_ms.setValue(200)
+        self._spin_ms.setFixedWidth(SPIN_W)
+        self._spin_ms.setEnabled(False)
+        lbl_ms = QLabel("ms"); lbl_ms.setStyleSheet("color:#9ca3af;font-size:12px;")
+        grid.addWidget(self._chk_loop, 1, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(self._spin_ms,  1, 1, Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(lbl_ms,         1, 2, Qt.AlignmentFlag.AlignVCenter)
+
+        # 行2：□HEX显示  □HEX发送（第1列对齐SpinBox左边缘）
+        self._chk_hex_rx = QCheckBox("HEX 显示")
+        self._chk_hex_tx = QCheckBox("HEX 发送")
+        grid.addWidget(self._chk_hex_rx, 2, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(self._chk_hex_tx, 2, 1, 1, 2, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        # 行3：□回车发送  □追加换行
+        self._chk_enter = QCheckBox("回车发送")
+        self._chk_nl = QCheckBox("追加换行")
+        self._chk_nl.setChecked(self._cfg["send"].get("add_newline", True))
+        grid.addWidget(self._chk_enter, 3, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(self._chk_nl,    3, 1, 1, 2, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        opts_v.addLayout(grid)
+        opts_v.addStretch(1)
+        h.addWidget(opts_container)
+
+        # 右：发送/清空按钮（固定尺寸，与原版一致）
+        BTN_H = (AREA_H - 4) // 2   # 4 = spacing between buttons
+
+        self._btn_send = QPushButton("发送")
+        self._btn_send.setObjectName("BtnSend")
+        self._btn_send.setEnabled(False)
+        self._btn_send.setFixedSize(_BTN_W, BTN_H)
+
+        self._btn_clear = QPushButton("清空")
+        self._btn_clear.setObjectName("BtnClear")
+        self._btn_clear.setFixedSize(_BTN_W, BTN_H)
+
+        btns_col = QWidget()
+        btns_col.setFixedSize(_BTN_W, AREA_H)
+        btns_v = QVBoxLayout(btns_col)
+        btns_v.setContentsMargins(0, 0, 0, 0)
+        btns_v.setSpacing(4)
+        btns_v.addWidget(self._btn_send)
+        btns_v.addWidget(self._btn_clear)
+        h.addWidget(btns_col)
+
+        self._loop_timer = QTimer(self)
+        self._loop_timer.timeout.connect(self._do_send)
+        return area
+
+    # ── 状态栏 ────────────────────────────────
+    def _make_statusbar(self):
+        sb = self.statusBar()
+        sb.setSizeGripEnabled(False)
+        self._lbl_status  = QLabel("就绪")
+        self._lbl_timer   = QLabel("00:00:00")
+        self._lbl_tx      = QLabel("TX: 0 B")
+        self._lbl_rx      = QLabel("RX: 0 B")
+        self._lbl_tx_rate = QLabel("↑ 0 B/s")
+        self._lbl_rx_rate = QLabel("↓ 0 B/s")
+        sb.addWidget(self._lbl_status, 1)
+        for w in (self._lbl_timer, self._lbl_tx, self._lbl_rx,
+                  self._lbl_tx_rate, self._lbl_rx_rate):
+            sb.addPermanentWidget(w)
+
+    def _toggle_send_area(self):
+        self._send_visible = not self._send_visible
+        self._send_area.setVisible(self._send_visible)
+        self._filter_mgr.update_toggle_btn(self._send_visible)
+
+    # ══ 信号连接 ═══════════════════════════════
+
+    def _wire(self):
+        self._serial.data_received.connect(self._on_rx)
+        self._serial.error_occurred.connect(self._on_err)
+        self._serial.connection_changed.connect(self._on_conn_changed)
+        self._btn_conn.clicked.connect(self._toggle_conn)
+        self._btn_send.clicked.connect(self._do_send)
+        self._btn_clear.clicked.connect(self._send_edit.clear)
+        self._chk_hex_rx.toggled.connect(self._filter_mgr.set_show_hex)
+        self._chk_ts.toggled.connect(self._spin_ts.setEnabled)
+        self._chk_loop.toggled.connect(self._spin_ms.setEnabled)
+        self._chk_loop.toggled.connect(self._on_loop_toggled)
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
-        from PySide6.QtGui import QKeyEvent
         if obj is self._send_edit and event.type() == QEvent.Type.KeyPress:
-            key_event: QKeyEvent = event
-            if (key_event.key() == Qt.Key.Key_Return and
-                    key_event.modifiers() & Qt.KeyboardModifier.ControlModifier):
-                self._do_send()
-                return True
+            k, m = event.key(), event.modifiers()
+            if k == Qt.Key.Key_Return and m & Qt.KeyboardModifier.ControlModifier:
+                self._do_send(); return True
+            if self._chk_enter.isChecked():
+                if k in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not m:
+                    self._do_send(); return True
         return super().eventFilter(obj, event)
 
-    # ── 串口操作 ──────────────────────────────
+    # ══ 串口扫描 ════════════════════════════════
 
-    def _refresh_ports(self):
-        """刷新可用串口列表"""
-        current = self._combo_port.currentText()
-        self._combo_port.clear()
+    def _scan_ports(self):
+        if self._connected: return
         ports = SerialManager.list_ports()
+        if ports == self._known_ports: return
+        self._known_ports = ports
+        prev = self._cb_port.currentData() or ""
+        self._cb_port.blockSignals(True)
+        self._cb_port.clear()
         if ports:
-            self._combo_port.addItems(ports)
-            # 尝试恢复之前选中的端口
-            idx = self._combo_port.findText(current)
-            if idx >= 0:
-                self._combo_port.setCurrentIndex(idx)
-            self._log_viewer.append_info(
-                f"扫描到 {len(ports)} 个串口: {', '.join(ports)}"
-            )
+            for info in SerialManager.get_port_info():
+                desc = info["description"]
+                label = f"{info['device']}  {desc}" if desc else info["device"]
+                self._cb_port.addItem(label, userData=info["device"])
+            for i in range(self._cb_port.count()):
+                if self._cb_port.itemData(i) == prev:
+                    self._cb_port.setCurrentIndex(i); break
         else:
-            self._combo_port.addItem("（无可用端口）")
-            self._log_viewer.append_info("未扫描到可用串口")
+            self._cb_port.addItem("（无可用端口）", userData="")
+        self._cb_port.blockSignals(False)
+
+    def _get_port(self) -> str:
+        d = self._cb_port.currentData()
+        return d if d else ""
+
+    # ══ 连接操作 ════════════════════════════════
+
+    def _toggle_conn(self):
+        if self._connected: self._do_disconnect()
+        else:               self._do_connect()
 
     def _do_connect(self):
-        """连接串口"""
-        port = self._combo_port.currentText()
-        if not port or port.startswith("（"):
-            QMessageBox.warning(self, "提示", "请先选择有效的串口端口！")
-            return
-
-        baudrate = int(self._combo_baud.currentText())
-        ok, msg = self._serial.connect(port, baudrate)
-        if ok:
-            self._log_viewer.append_info(msg)
+        port = self._get_port()
+        if not port:
+            QMessageBox.warning(self, "提示", "请先选择有效的串口端口！"); return
+        ok, msg = self._serial.connect(port, int(self._cb_baud.currentText()))
+        if ok:   self._filter_mgr.append_info(msg)
         else:
-            self._log_viewer.append_error(msg)
+            self._filter_mgr.append_error(msg)
             QMessageBox.critical(self, "连接失败", msg)
 
     def _do_disconnect(self):
-        """断开串口"""
-        ok, msg = self._serial.disconnect()
-        self._log_viewer.append_info(msg)
+        if self._loop_timer.isActive():
+            self._loop_timer.stop(); self._chk_loop.setChecked(False)
+        _, msg = self._serial.disconnect()
+        self._filter_mgr.append_info(msg)
+
+    # ══ 发送 ════════════════════════════════════
 
     def _do_send(self):
-        """发送数据"""
-        if not self._is_connected:
-            return
-
+        if not self._connected: return
         text = self._send_edit.toPlainText()
-        if not text:
-            return
-
+        if not text: return
         try:
-            if self._chk_hex_send.isChecked():
-                # HEX 模式：解析十六进制字符串
-                hex_str = text.replace(" ", "").replace("\n", "").replace("\r", "")
-                if len(hex_str) % 2 != 0:
-                    self._log_viewer.append_error("HEX 格式错误：字节数不完整")
-                    return
-                data = bytes.fromhex(hex_str)
+            if self._chk_hex_tx.isChecked():
+                hs = text.replace(" ","").replace("\n","").replace("\r","")
+                if len(hs) % 2:
+                    self._filter_mgr.append_error("HEX 格式错误：字节数不完整"); return
+                data = bytes.fromhex(hs)
             else:
-                # 文本模式
-                if self._chk_newline.isChecked():
+                if self._chk_nl.isChecked():
                     text = text.rstrip("\r\n") + "\r\n"
                 data = text.encode("utf-8")
-
             ok, msg = self._serial.send(data)
-            if ok:
-                self._log_viewer.append_sent(data)
-            else:
-                self._log_viewer.append_error(msg)
-
+            if ok:   self._filter_mgr.append_sent(data)
+            else:    self._filter_mgr.append_error(msg)
         except ValueError as e:
-            self._log_viewer.append_error(f"HEX 解析错误: {e}")
+            self._filter_mgr.append_error(f"HEX 解析错误: {e}")
 
-    # ── 信号槽 ────────────────────────────────
+    # ══ 信号槽 ══════════════════════════════════
 
-    def _on_data_received(self, data: bytes):
-        """接收到串口数据"""
-        self._log_viewer.append_data(data)
+    def _on_rx(self, data: bytes):
+        if self._chk_ts.isChecked():
+            try:
+                ts = datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "] "
+                txt = data.decode("utf-8", errors="replace")
+                data = "\n".join((ts+l) if l else l for l in txt.split("\n")).encode()
+            except Exception: pass
+        self._filter_mgr.append_data(data)
 
-    def _on_serial_error(self, msg: str):
-        """串口发生错误"""
-        self._log_viewer.append_error(msg)
+    def _on_err(self, msg: str):
+        self._filter_mgr.append_error(msg)
 
-    def _on_connection_changed(self, connected: bool):
-        """连接状态变化"""
-        self._is_connected = connected
+    def _on_conn_changed(self, connected: bool):
+        self._connected = connected
         if connected:
-            port = self._combo_port.currentText()
-            baud = self._combo_baud.currentText()
-            self._lbl_conn_state.setText(f"● {port} @ {baud}")
-            self._lbl_conn_state.setObjectName("lbl_status_connected")
-            self._lbl_status.setText(f"已连接: {port} @ {baud} bps")
-            self._btn_connect.setEnabled(False)
-            self._btn_disconnect.setEnabled(True)
+            self._set_dot(True)
+            self._btn_conn.setText("断  开")
+            self._btn_conn.setObjectName("BtnDisconnect")
+            self._btn_conn.style().unpolish(self._btn_conn)
+            self._btn_conn.style().polish(self._btn_conn)
+            self._cb_port.setEnabled(False)
+            self._cb_baud.setEnabled(False)
             self._btn_send.setEnabled(True)
-            self._combo_port.setEnabled(False)
-            self._combo_baud.setEnabled(False)
-            self._btn_refresh.setEnabled(False)
+            self._start_time = datetime.now()
+            self._serial.reset_counters()
+            self._last_rx = self._last_tx = 0
+            p, b = self._get_port(), self._cb_baud.currentText()
+            self._lbl_status.setText(f"已连接  {p}  @  {b} bps")
         else:
-            self._lbl_conn_state.setText("● 未连接")
-            self._lbl_conn_state.setObjectName("lbl_status_disconnected")
-            self._lbl_status.setText("已断开连接")
-            self._btn_connect.setEnabled(True)
-            self._btn_disconnect.setEnabled(False)
+            self._set_dot(False)
+            self._btn_conn.setText("连  接")
+            self._btn_conn.setObjectName("BtnConnect")
+            self._btn_conn.style().unpolish(self._btn_conn)
+            self._btn_conn.style().polish(self._btn_conn)
+            self._cb_port.setEnabled(True)
+            self._cb_baud.setEnabled(True)
             self._btn_send.setEnabled(False)
-            self._combo_port.setEnabled(True)
-            self._combo_baud.setEnabled(True)
-            self._btn_refresh.setEnabled(True)
+            self._start_time = None
+            self._lbl_status.setText("已断开")
 
-        # 强制刷新样式（objectName 变化后需要重新 polish）
-        self._lbl_conn_state.style().unpolish(self._lbl_conn_state)
-        self._lbl_conn_state.style().polish(self._lbl_conn_state)
+    def _set_dot(self, on: bool):
+        n = "DotOn" if on else "DotOff"
+        self._dot.setObjectName(n)
+        self._dot.style().unpolish(self._dot)
+        self._dot.style().polish(self._dot)
 
-    def _update_counters(self):
-        """定时更新收发字节计数"""
-        self._lbl_rx.setText(f"RX: {self._format_bytes(self._serial.rx_bytes)}")
-        self._lbl_tx.setText(f"TX: {self._format_bytes(self._serial.tx_bytes)}")
-        self._lbl_time.setText(datetime.now().strftime("%H:%M:%S"))
+    def _on_baud_changed(self, idx: int):
+        """选择波特率下拉项时处理：若选了"自定义..."则弹出输入框"""
+        text = self._cb_baud.itemText(idx)
+        if text != "自定义...":
+            return
+        # 弹出输入框
+        val, ok = QInputDialog.getText(
+            self, "自定义波特率", "请输入波特率（整数）：",
+            text=""
+        )
+        if not ok or not val.strip():
+            # 取消：恢复到上一个有效选项
+            self._cb_baud.blockSignals(True)
+            self._cb_baud.setCurrentIndex(max(0, idx - 1))
+            self._cb_baud.blockSignals(False)
+            return
+        try:
+            baud = int(val.strip())
+            if baud <= 0:
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "输入错误", "波特率必须是正整数！")
+            self._cb_baud.blockSignals(True)
+            self._cb_baud.setCurrentIndex(max(0, idx - 1))
+            self._cb_baud.blockSignals(False)
+            return
+        # 检查是否已存在
+        existing = self._cb_baud.findText(str(baud))
+        if existing >= 0:
+            self._cb_baud.blockSignals(True)
+            self._cb_baud.setCurrentIndex(existing)
+            self._cb_baud.blockSignals(False)
+            return
+        # 插入到"自定义..."之前，按数值排序
+        insert_pos = 0
+        for i in range(self._cb_baud.count() - 1):  # 不含最后的"自定义..."
+            try:
+                if int(self._cb_baud.itemText(i)) < baud:
+                    insert_pos = i + 1
+            except ValueError:
+                pass
+        self._cb_baud.blockSignals(True)
+        self._cb_baud.insertItem(insert_pos, str(baud))
+        self._cb_baud.setCurrentIndex(insert_pos)
+        self._cb_baud.blockSignals(False)
+        # 保存到 config
+        if "custom_baudrates" not in self._cfg["serial"]:
+            self._cfg["serial"]["custom_baudrates"] = []
+        if baud not in self._cfg["serial"]["custom_baudrates"]:
+            self._cfg["serial"]["custom_baudrates"].append(baud)
+            self._cfg["serial"]["custom_baudrates"].sort()
+        save_config(self._cfg)
 
-    # ── 工具方法 ──────────────────────────────
-
-    @staticmethod
-    def _make_vsep() -> QFrame:
-        """创建垂直分隔线"""
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        return sep
-
-    @staticmethod
-    def _format_bytes(n: int) -> str:
-        """格式化字节数为可读字符串"""
-        if n < 1024:
-            return f"{n} B"
-        elif n < 1024 * 1024:
-            return f"{n / 1024:.1f} KB"
+    def _on_loop_toggled(self, checked: bool):
+        if checked and self._connected:
+            self._loop_timer.start(self._spin_ms.value())
         else:
-            return f"{n / 1024 / 1024:.2f} MB"
+            self._loop_timer.stop()
 
-    # ── 窗口关闭 ──────────────────────────────
+    def _refresh_stat(self):
+        rx, tx = self._serial.rx_bytes, self._serial.tx_bytes
+        rr, tr = rx - self._last_rx, tx - self._last_tx
+        self._last_rx, self._last_tx = rx, tx
+        self._lbl_rx.setText(f"RX: {self._fmt(rx)}")
+        self._lbl_tx.setText(f"TX: {self._fmt(tx)}")
+        self._lbl_rx_rate.setText(f"↓ {self._fmt(rr)}/s")
+        self._lbl_tx_rate.setText(f"↑ {self._fmt(tr)}/s")
+        if self._start_time:
+            s = int((datetime.now()-self._start_time).total_seconds())
+            h,r = divmod(s,3600); m,s = divmod(r,60)
+            self._lbl_timer.setText(f"{h:02d}:{m:02d}:{s:02d}")
+        else:
+            self._lbl_timer.setText("00:00:00")
+
+    @staticmethod
+    def _fmt(n: int) -> str:
+        if n < 1024:    return f"{n} B"
+        if n < 1048576: return f"{n/1024:.1f} KB"
+        return f"{n/1048576:.2f} MB"
 
     def closeEvent(self, event):
-        """关闭窗口时断开串口并保存配置"""
-        if self._is_connected:
-            self._serial.disconnect()
-
-        # 保存当前配置
-        self._config["serial"]["baudrate"] = int(self._combo_baud.currentText())
-        self._config["serial"]["port"] = self._combo_port.currentText()
-        self._config["send"]["add_newline"] = self._chk_newline.isChecked()
-        save_config(self._config)
-
+        self._port_timer.stop(); self._stat_timer.stop()
+        if self._loop_timer.isActive(): self._loop_timer.stop()
+        if self._connected: self._serial.disconnect()
+        cur_text = self._cb_baud.currentText()
+        if cur_text != "自定义...":
+            try:
+                self._cfg["serial"]["baudrate"] = int(cur_text)
+            except ValueError:
+                pass
+        self._cfg["serial"]["port"] = self._get_port()
+        self._cfg["send"]["add_newline"] = self._chk_nl.isChecked()
+        save_config(self._cfg)
         event.accept()
 
 
-# ══════════════════════════════════════════════
-# 程序入口
-# ══════════════════════════════════════════════
 def main():
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setApplicationName("SerialAssistant")
-    app.setApplicationVersion("1.0.0")
-    app.setStyleSheet(GLOBAL_STYLE)
-
-    window = MainWindow()
-    window.show()
-
+    app.setStyleSheet(STYLE)
+    w = MainWindow()
+    w.show()
     sys.exit(app.exec())
 
 

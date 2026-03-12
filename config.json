@@ -1,6 +1,6 @@
 {
     "serial": {
-        "port": "（无可用端口）",
+        "port": "",
         "baudrate": 115200,
         "bytesize": 8,
         "parity": "N",
