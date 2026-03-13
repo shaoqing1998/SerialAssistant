@@ -11,17 +11,18 @@ from typing import Callable
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabBar,
-    QTabWidget, QTextEdit, QLineEdit, QPushButton,
-    QCheckBox, QInputDialog, QMenu
+    QTabWidget, QLineEdit, QPushButton,
+    QCheckBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor, QPainter, QPen
+from rounded_menu import RoundedMenu, RoundedContextTextEdit
 
 
 # ══════════════════════════════════════════════
 # 单个过滤 Tab 的日志视图
 # ══════════════════════════════════════════════
-class FilteredLogView(QTextEdit):
+class FilteredLogView(RoundedContextTextEdit):
     def __init__(self, keywords: list[str] = None,
                  case_sensitive: bool = False,
                  invert: bool = False,
@@ -35,7 +36,7 @@ class FilteredLogView(QTextEdit):
         self._max_lines = 5000
 
         self.setReadOnly(True)
-        self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.setLineWrapMode(RoundedContextTextEdit.LineWrapMode.NoWrap)
         font = QFont("Consolas", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
@@ -125,24 +126,21 @@ class RenamableTabBar(QTabBar):
         if self.tabData(idx) == _PLUS_DATA:
             return
 
-        is_main = (self.tabText(idx).strip() == "main")
-        menu = QMenu(self)
+        # main Tab 不显示菜单
+        if self.tabText(idx).strip() == "main":
+            return
 
-        act_rename = menu.addAction("✏  重命名")
-        act_rename.setEnabled(not is_main)
-
-        if not is_main:
-            menu.addSeparator()
-            act_close = menu.addAction("✕  关闭")
-        else:
-            act_close = None
+        menu = RoundedMenu(self.window())
+        act_rename = menu.addAction("重命名")
+        menu.addSeparator()
+        act_close = menu.addAction("关闭")
 
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
         if chosen == act_rename:
             self.tab_rename_requested.emit(idx)
-        elif act_close and chosen == act_close:
+        elif chosen == act_close:
             # 发出关闭信号（通过 FilterManager 处理）
             self._close_idx = idx
             self.tabCloseRequested.emit(idx)
@@ -220,7 +218,7 @@ class FilterManager(QWidget):
         self._tabs.addTab(main_view, "main")
 
         # filter Tabs
-        for i in range(1, 4):
+        for i in range(1, 2):
             self._add_tab(f"filter-{i:02d}", closable=True)
 
         # + Tab
@@ -400,6 +398,23 @@ class FilterManager(QWidget):
             v = self._tabs.widget(i)
             if isinstance(v, FilteredLogView):
                 v.clear(); v._line_count = 0
+
+    def clear_main_and_current(self):
+        """清空 main 和当前显示的 filter 内容"""
+        # 清空 main tab
+        for i in range(self._tabs.count()):
+            tab_name = self._tabs.tabText(i).strip()
+            if tab_name == "main":
+                v = self._tabs.widget(i)
+                if isinstance(v, FilteredLogView):
+                    v.clear(); v._line_count = 0
+                break
+        
+        # 清空当前显示的 tab（包括 main 本身）
+        current_idx = self._tabs.currentIndex()
+        v = self._tabs.widget(current_idx)
+        if isinstance(v, FilteredLogView):
+            v.clear(); v._line_count = 0
 
     def set_auto_scroll(self, v: bool):
         self._auto_scroll = v

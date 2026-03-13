@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout, QGridLayout,
     QComboBox, QPushButton, QLabel,
-    QTextEdit, QCheckBox, QSizePolicy,
+    QCheckBox, QSizePolicy,
     QMessageBox, QSpinBox, QStyledItemDelegate,
     QInputDialog,
 )
@@ -25,6 +25,7 @@ from PySide6.QtGui import QFont, QMouseEvent
 from config import load_config, save_config
 from serial_manager import SerialManager
 from filter_manager import FilterManager
+from rounded_menu import RoundedMenu, RoundedContextTextEdit
 
 
 # ── 全局对齐边距
@@ -74,8 +75,14 @@ class _BaudComboBox(QComboBox):
 STYLE = """
 * { outline: none; }
 
-QMainWindow, QWidget {
+QMainWindow, QWidget#AppRoot {
     background-color: #eef0f3;
+    color: #1f2937;
+    font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QWidget {
     color: #1f2937;
     font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
     font-size: 13px;
@@ -284,6 +291,7 @@ QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
 QScrollBar::handle:vertical:hover,
 QScrollBar::handle:horizontal:hover { background: #3b82f6; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+
 """
 
 
@@ -304,7 +312,6 @@ class MainWindow(QMainWindow):
         self._send_visible = True
 
         self._build_ui()
-        self._wire()
 
         self._port_timer = QTimer(self)
         self._port_timer.timeout.connect(self._scan_ports)
@@ -315,6 +322,7 @@ class MainWindow(QMainWindow):
         self._stat_timer.start(1000)
 
         self._scan_ports()
+        self._wire()
 
     # ══ 构建 UI ════════════════════════════════
 
@@ -325,6 +333,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 520)
 
         root = QWidget()
+        root.setObjectName("AppRoot")
         self.setCentralWidget(root)
         vbox = QVBoxLayout(root)
         vbox.setContentsMargins(_M, 8, _M, 4)
@@ -403,7 +412,7 @@ class MainWindow(QMainWindow):
         h.setSpacing(8)
 
         # 左：发送输入框（stretch=1）
-        self._send_edit = QTextEdit()
+        self._send_edit = RoundedContextTextEdit()
         self._send_edit.setObjectName("SendEdit")
         self._send_edit.setPlaceholderText("输入发送内容…（Ctrl+Enter 发送）")
         mono = QFont("Consolas", 11)
@@ -489,6 +498,7 @@ class MainWindow(QMainWindow):
         self._btn_clear = QPushButton("清空")
         self._btn_clear.setObjectName("BtnClear")
         self._btn_clear.setFixedSize(_BTN_W, BTN_H)
+        self._btn_clear.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
         btns_col = QWidget()
         btns_col.setFixedSize(_BTN_W, AREA_H)
@@ -531,11 +541,20 @@ class MainWindow(QMainWindow):
         self._serial.connection_changed.connect(self._on_conn_changed)
         self._btn_conn.clicked.connect(self._toggle_conn)
         self._btn_send.clicked.connect(self._do_send)
-        self._btn_clear.clicked.connect(self._send_edit.clear)
+        self._btn_clear.clicked.connect(self._filter_mgr.clear_main_and_current)
         self._chk_hex_rx.toggled.connect(self._filter_mgr.set_show_hex)
         self._chk_ts.toggled.connect(self._spin_ts.setEnabled)
         self._chk_loop.toggled.connect(self._spin_ms.setEnabled)
         self._chk_loop.toggled.connect(self._on_loop_toggled)
+        self._btn_clear.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._btn_clear.customContextMenuRequested.connect(self._on_clear_context_menu)
+
+    def _on_clear_context_menu(self, pos):
+        """清空按钮右键菜单（Win11 风格）"""
+        menu = RoundedMenu(self.window())
+        act_clear_all = menu.addAction("清空所有")
+        act_clear_all.triggered.connect(self._filter_mgr.clear_all)
+        menu.exec(self._btn_clear.mapToGlobal(pos))
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
@@ -765,6 +784,9 @@ class MainWindow(QMainWindow):
 def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    QApplication.setAttribute(
+        Qt.ApplicationAttribute.AA_DontUseNativeMenuWindows, True
+    )
     app = QApplication(sys.argv)
     app.setApplicationName("SerialAssistant")
     app.setStyleSheet(STYLE)
