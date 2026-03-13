@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QPoint, QEvent, QTimer, QObject
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QGuiApplication
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QGuiApplication, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -91,6 +91,7 @@ class RoundedMenu(QDialog):
         super().__init__(parent)
         self._actions = []  # 保存 _MenuAction 对象
         self._selected_action = None
+        self._max_text_width = 0  # 记录最长文本宽度
         self._init_window()
         self._init_layout()
 
@@ -128,7 +129,12 @@ class RoundedMenu(QDialog):
         btn.setEnabled(enabled)
         btn.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
         btn.setFlat(True)
-        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+
+        # 计算文本宽度
+        font_metrics = QFontMetrics(btn.font())
+        text_width = font_metrics.horizontalAdvance(text)
+        self._max_text_width = max(self._max_text_width, text_width)
 
         action = _MenuAction(text, enabled, self)
         self._actions.append(action)
@@ -150,6 +156,15 @@ class RoundedMenu(QDialog):
 
     def exec(self, global_pos: QPoint = None):
         """弹出菜单，返回被点击的 action（模拟 QMenu.exec）"""
+        # 根据最长文本设置固定宽度
+        if self._max_text_width > 0:
+            # 总宽度 = 文本宽度 + 左右padding(14*2) + 左右margins(6*2)
+            total_width = self._max_text_width + 14 * 2 + 6 * 2
+            # 加上一些额外空间，确保文本不会贴边
+            total_width += 10
+            # 设置固定宽度
+            self.setFixedWidth(int(total_width))
+        
         self.adjustSize()
 
         if global_pos is None:

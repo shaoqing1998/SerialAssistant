@@ -1,5 +1,6 @@
 # SerialAssistant - 串口调试助手
 
+这是一个纯AI项目
 一个基于 **Python + PySide6 + pyserial** 的串口调试工具，支持数据过滤和关键词高亮（规划中）。
 
 ---
