@@ -1,9 +1,10 @@
 """
 filter_manager.py - 多 Tab 关键词过滤管理模块
-v1.7:
-- Tab 右键菜单（重命名/关闭），去掉 × 按钮
-- 蓝线固定宽度 20px，底部居中（重写 paintEvent）
-- 过滤栏左右边距与主布局对齐
+v0.37:
+- 关键词过滤改为实时生效（textChanged），不再需要按 Enter
+- 区分大小写 / 反选 checkbox 也实时生效
+- 只对新来的日志应用当前关键词，已显示的历史日志不受影响
+- "历史"按钮仍可用于用当前关键词重新过滤全部历史
 """
 
 from __future__ import annotations
@@ -79,7 +80,7 @@ class FilteredLogView(RoundedContextTextEdit):
         for _ in range(n):
             cursor.movePosition(QTextCursor.MoveOperation.Down,
                                 QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
+        cursor.removeSelectedText()
         self._line_count -= n
 
     @staticmethod
@@ -116,7 +117,7 @@ class RenamableTabBar(QTabBar):
         if idx == self.count() - 1 and self.tabData(idx) == _PLUS_DATA:
             if event.button() == Qt.MouseButton.LeftButton:
                 self.add_tab_requested.emit()
-            return
+                return
         super().mousePressEvent(event)
 
     def contextMenuEvent(self, event):
@@ -236,9 +237,10 @@ class FilterManager(QWidget):
         self._kw_edit = RoundedContextLineEdit()
         self._kw_edit.setObjectName("KwEdit")
         self._kw_edit.setPlaceholderText(
-            "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 按 Enter 应用"
+            "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 实时生效"
         )
-        self._kw_edit.returnPressed.connect(self._apply_kw)
+        # ★ 改为 textChanged 实时生效，不再需要按 Enter
+        self._kw_edit.textChanged.connect(self._apply_kw)
         h.addWidget(self._kw_edit, stretch=1)
 
         right_box = QWidget()
@@ -250,6 +252,10 @@ class FilterManager(QWidget):
         self._chk_case = QCheckBox("区分大小写")
         self._chk_invert = QCheckBox("反选")
         self._chk_invert.setToolTip("显示不包含关键词的行")
+
+        # ★ checkbox 也实时生效
+        self._chk_case.toggled.connect(self._apply_kw)
+        self._chk_invert.toggled.connect(self._apply_kw)
 
         self._btn_refilter = QPushButton("历史")
         self._btn_refilter.setObjectName("BtnRefilter")
@@ -339,16 +345,25 @@ class FilterManager(QWidget):
         self._chk_invert.setEnabled(not is_main)
         self._btn_refilter.setEnabled(not is_main)
 
+        # ★ 切 Tab 时阻塞信号，防止 textChanged/toggled 误触发 _apply_kw
+        self._kw_edit.blockSignals(True)
+        self._chk_case.blockSignals(True)
+        self._chk_invert.blockSignals(True)
+
         if is_main:
             self._kw_edit.setPlaceholderText("main 窗口显示所有数据（不过滤）")
             self._kw_edit.clear()
         elif isinstance(view, FilteredLogView):
             self._kw_edit.setPlaceholderText(
-                "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 按 Enter 应用"
+                "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 实时生效"
             )
             self._kw_edit.setText("|".join(view.keywords))
             self._chk_case.setChecked(view.case_sensitive)
             self._chk_invert.setChecked(view.invert)
+
+        self._kw_edit.blockSignals(False)
+        self._chk_case.blockSignals(False)
+        self._chk_invert.blockSignals(False)
 
     def _apply_kw(self):
         idx = self._tabs.currentIndex()
