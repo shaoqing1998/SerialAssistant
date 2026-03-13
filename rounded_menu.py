@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QObject, QSize
+from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QObject, QSize, QRect
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QGuiApplication, QFontMetrics, QIcon, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -29,10 +29,6 @@ QPushButton#MenuItem {
     margin: 0;
     min-width: 0;
     min-height: 34px;
-    text-align: left;
-    color: #1f2937;
-    font-size: 13px;
-    font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
 }
 
 QPushButton#MenuItem:hover {
@@ -46,7 +42,6 @@ QPushButton#MenuItem:pressed {
 }
 
 QPushButton#MenuItem:disabled {
-    color: #9ca3af;
     background: transparent;
     border: none;
 }
@@ -138,6 +133,13 @@ def _normalize_action_text(text: str) -> str:
     return mapping.get(clean.lower(), clean)
 
 
+def _extract_action_shortcut(text: str) -> str:
+    parts = text.split("\t", 1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
 def _action_icon_key(text: str) -> str | None:
     clean = text.split("\t")[0].replace("&", "").strip().lower()
     mapping = {
@@ -169,6 +171,51 @@ def _make_menu_icon(icon_key: str, color: str = "#6b7280") -> QIcon:
     painter.end()
 
     return QIcon(pixmap)
+
+
+class MenuItemButton(QPushButton):
+    def __init__(self, title: str, shortcut: str = "", icon_key: str | None = None, parent=None):
+        super().__init__("", parent)
+        self._title = title
+        self._shortcut = shortcut
+        self._icon_key = icon_key
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        fm = painter.fontMetrics()
+        left = 14
+        right = self.width() - 14
+        center_y = self.rect().center().y()
+
+        if self._icon_key:
+            icon_color = "#6b7280" if self.isEnabled() else "#d1d5db"
+            icon = _make_menu_icon(self._icon_key, icon_color)
+            icon_rect = QRect(left, center_y - 7, 14, 14)
+            icon.paint(painter, icon_rect)
+            left += 22
+
+        shortcut_width = fm.horizontalAdvance(self._shortcut) if self._shortcut else 0
+        shortcut_gap = 18 if self._shortcut else 0
+        shortcut_left = right - shortcut_width
+
+        text_color = QColor("#1f2937") if self.isEnabled() else QColor("#9ca3af")
+        shortcut_color = QColor("#9ca3af") if self.isEnabled() else QColor("#d1d5db")
+
+        painter.setPen(text_color)
+        title_rect = self.rect().adjusted(left, 0, -(shortcut_width + shortcut_gap + 14), 0) if self._shortcut else self.rect().adjusted(left, 0, -14, 0)
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._title)
+
+        if self._shortcut:
+            painter.setPen(shortcut_color)
+            shortcut_rect = self.rect().adjusted(shortcut_left, 0, -14, 0)
+            painter.drawText(shortcut_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, self._shortcut)
+
+        painter.end()
 
 
 class _MenuAction(QObject):
@@ -241,8 +288,8 @@ class RoundedMenu(QDialog):
         self._vbox.setContentsMargins(self.PANEL_MARGIN, self.PANEL_MARGIN, self.PANEL_MARGIN, self.PANEL_MARGIN)
         self._vbox.setSpacing(2)
 
-    def addAction(self, text: str, enabled: bool = True, icon_key: str | None = None) -> _MenuAction:
-        btn = QPushButton(text, self._panel)
+    def addAction(self, text: str, enabled: bool = True, icon_key: str | None = None, shortcut: str = "") -> _MenuAction:
+        btn = MenuItemButton(text, shortcut=shortcut, icon_key=icon_key, parent=self._panel)
         btn.setObjectName("MenuItem")
         btn.setEnabled(enabled)
         btn.setCursor(
@@ -256,14 +303,13 @@ class RoundedMenu(QDialog):
         btn.setFixedHeight(self.ITEM_HEIGHT)
         btn.setMinimumWidth(0)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        if icon_key:
-            btn.setIcon(_make_menu_icon(icon_key))
-            btn.setIconSize(QSize(14, 14))
 
         btn.ensurePolished()
         text_width = QFontMetrics(btn.font()).horizontalAdvance(text)
+        shortcut_width = QFontMetrics(btn.font()).horizontalAdvance(shortcut) if shortcut else 0
         icon_width = 22 if icon_key else 0
-        self._max_text_width = max(self._max_text_width, text_width + icon_width)
+        shortcut_gap = 18 if shortcut else 0
+        self._max_text_width = max(self._max_text_width, text_width + shortcut_width + icon_width + shortcut_gap)
 
         action = _MenuAction(text, enabled, self)
         self._actions.append(action)
@@ -389,7 +435,8 @@ class RoundedContextTextEdit(QTextEdit):
                 continue
 
             icon_key = _action_icon_key(raw_text)
-            custom_act = menu.addAction(text, act.isEnabled(), icon_key=icon_key)
+            shortcut = _extract_action_shortcut(raw_text)
+            custom_act = menu.addAction(text, act.isEnabled(), icon_key=icon_key, shortcut=shortcut)
             if act.isEnabled():
                 custom_act.triggered.connect(act.trigger)
 
@@ -425,7 +472,8 @@ class RoundedContextLineEdit(QLineEdit):
                 continue
 
             icon_key = _action_icon_key(raw_text)
-            custom_act = menu.addAction(text, act.isEnabled(), icon_key=icon_key)
+            shortcut = _extract_action_shortcut(raw_text)
+            custom_act = menu.addAction(text, act.isEnabled(), icon_key=icon_key, shortcut=shortcut)
             if act.isEnabled():
                 custom_act.triggered.connect(act.trigger)
 
