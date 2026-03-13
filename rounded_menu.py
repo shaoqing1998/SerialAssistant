@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QPushButton,
     QTextEdit,
+    QLineEdit,
     QVBoxLayout,
     QWidget,
     QSizePolicy,
@@ -238,6 +239,35 @@ class RoundedMenu(QDialog):
 
 class RoundedContextTextEdit(QTextEdit):
     """自定义文本编辑框，提供圆角右键菜单"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_rounded_context_menu)
+
+    def _show_rounded_context_menu(self, pos):
+        """显示自定义右键菜单"""
+        src_menu = self.createStandardContextMenu()
+        menu = RoundedMenu(self.window())
+
+        for act in src_menu.actions():
+            if act.isSeparator():
+                menu.addSeparator()
+                continue
+
+            text = act.text().split('\t')[0].replace('&', '').strip()
+            if not text:
+                continue
+
+            custom_act = menu.addAction(text, act.isEnabled())
+            if act.isEnabled():
+                custom_act.triggered.connect(act.trigger)
+
+        src_menu.deleteLater()
+        menu.exec(self.mapToGlobal(pos))
+
+
+class RoundedContextLineEdit(QLineEdit):
+    """自定义单行输入框，提供圆角右键菜单"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

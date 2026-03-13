@@ -11,12 +11,12 @@ from typing import Callable
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabBar,
-    QTabWidget, QLineEdit, QPushButton,
+    QTabWidget, QPushButton,
     QCheckBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor, QPainter, QPen
-from rounded_menu import RoundedMenu, RoundedContextTextEdit
+from rounded_menu import RoundedMenu, RoundedContextTextEdit, RoundedContextLineEdit
 
 
 # ══════════════════════════════════════════════
@@ -239,7 +239,7 @@ class FilterManager(QWidget):
         h.setContentsMargins(0, 4, 0, 4)
         h.setSpacing(8)
 
-        self._kw_edit = QLineEdit()
+        self._kw_edit = RoundedContextLineEdit()
         self._kw_edit.setObjectName("KwEdit")
         self._kw_edit.setPlaceholderText(
             "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 按 Enter 应用"
