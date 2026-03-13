@@ -27,7 +27,7 @@ QPushButton#MenuItem {
     padding: 0 14px;
     margin: 0;
     min-width: 0;
-    min-height: 32px;
+    min-height: 34px;
     text-align: left;
     color: #1f2937;
     font-size: 13px;
@@ -105,10 +105,10 @@ class RoundedMenu(QDialog):
     BG_COLOR = QColor("#ffffff")
     BORDER_COLOR = QColor("#e5e7eb")
     H_PADDING = 14
-    ITEM_HEIGHT = 32
+    ITEM_HEIGHT = 34
     PANEL_MARGIN = 6
     MIN_MENU_WIDTH = 0
-    EXTRA_WIDTH = 0
+    EXTRA_WIDTH = 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -160,6 +160,7 @@ class RoundedMenu(QDialog):
         btn.setMinimumWidth(0)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
+        btn.ensurePolished()
         text_width = QFontMetrics(btn.font()).horizontalAdvance(text)
         self._max_text_width = max(self._max_text_width, text_width)
 

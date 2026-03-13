@@ -31,12 +31,12 @@ from rounded_menu import RoundedMenu, RoundedContextTextEdit
 # ── 全局对齐边距
 _M = 10   # px
 
-# 选项区宽度：列0(72)+sp(6)+列1(64)+sp(6)+ms(20) = 168px，留余量到 176px
-_OPTS_W = 176
+# 选项区宽度：略增，避免字体放大后挤压
+_OPTS_W = 192
 # 按钮宽度
 _BTN_W = 72
 # 筛选栏右侧容器宽度 = opts + spacing + btns
-_RIGHT_W = _OPTS_W + 8 + _BTN_W   # = 250px
+_RIGHT_W = _OPTS_W + 8 + _BTN_W   # = 272px
 
 
 class _CenterDelegate(QStyledItemDelegate):
@@ -335,6 +335,7 @@ class MainWindow(QMainWindow):
         self._filter_mgr = FilterManager(
             self._cfg,
             h_margin=0,
+            right_width=_RIGHT_W,
             toggle_send_callback=self._toggle_send_area
         )
         vbox.addWidget(self._filter_mgr, stretch=1)
@@ -383,7 +384,7 @@ class MainWindow(QMainWindow):
         return bar
 
     def _make_send_area(self) -> QWidget:
-        AREA_H = 124
+        AREA_H = 128
         area = QWidget()
         area.setFixedHeight(AREA_H)
 
@@ -400,7 +401,7 @@ class MainWindow(QMainWindow):
         self._send_edit.installEventFilter(self)
         h.addWidget(self._send_edit, stretch=1)
 
-        SPIN_W = 68
+        SPIN_W = 72
         opts_container = QWidget()
         opts_container.setFixedWidth(_OPTS_W)
         opts_container.setFixedHeight(AREA_H)
@@ -414,9 +415,9 @@ class MainWindow(QMainWindow):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(6)
-        grid.setColumnMinimumWidth(0, 76)
+        grid.setColumnMinimumWidth(0, 84)
         grid.setColumnStretch(2, 1)
-        ROW_H = 26
+        ROW_H = 28
         for r in range(4):
             grid.setRowMinimumHeight(r, ROW_H)
 
@@ -426,7 +427,7 @@ class MainWindow(QMainWindow):
         self._spin_ts.setFixedWidth(SPIN_W)
         self._spin_ts.setEnabled(False)
         self._spin_ts.setToolTip("超时时间：超过此时间无数据则换行")
-        lbl_ts = QLabel("ms"); lbl_ts.setStyleSheet("color:#9ca3af;font-size:13px;")
+        lbl_ts = QLabel("ms"); lbl_ts.setStyleSheet("color:#9ca3af;font-size:14px;")
         grid.addWidget(self._chk_ts,  0, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         grid.addWidget(self._spin_ts, 0, 1, Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(lbl_ts,        0, 2, Qt.AlignmentFlag.AlignVCenter)
@@ -436,7 +437,7 @@ class MainWindow(QMainWindow):
         self._spin_ms.setRange(50, 99999); self._spin_ms.setValue(200)
         self._spin_ms.setFixedWidth(SPIN_W)
         self._spin_ms.setEnabled(False)
-        lbl_ms = QLabel("ms"); lbl_ms.setStyleSheet("color:#9ca3af;font-size:13px;")
+        lbl_ms = QLabel("ms"); lbl_ms.setStyleSheet("color:#9ca3af;font-size:14px;")
         grid.addWidget(self._chk_loop, 1, 0, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         grid.addWidget(self._spin_ms,  1, 1, Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(lbl_ms,         1, 2, Qt.AlignmentFlag.AlignVCenter)
