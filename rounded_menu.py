@@ -27,10 +27,10 @@ QPushButton#MenuItem {
     padding: 0 14px;
     margin: 0;
     min-width: 0;
-    min-height: 30px;
+    min-height: 32px;
     text-align: left;
     color: #1f2937;
-    font-size: 12px;
+    font-size: 13px;
     font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
 }
 
@@ -57,6 +57,21 @@ QFrame#MenuSeparator {
     margin: 3px 10px;
 }
 """
+
+
+def _normalize_action_text(text: str) -> str:
+    clean = text.split("\t")[0].replace("&", "").strip()
+    mapping = {
+        "undo": "撤销",
+        "redo": "重做",
+        "cut": "剪切",
+        "copy": "复制",
+        "paste": "粘贴",
+        "delete": "删除",
+        "select all": "全选",
+        "paste and match style": "粘贴并匹配样式",
+    }
+    return mapping.get(clean.lower(), clean)
 
 
 class _MenuAction(QObject):
@@ -90,7 +105,7 @@ class RoundedMenu(QDialog):
     BG_COLOR = QColor("#ffffff")
     BORDER_COLOR = QColor("#e5e7eb")
     H_PADDING = 14
-    ITEM_HEIGHT = 30
+    ITEM_HEIGHT = 32
     PANEL_MARGIN = 6
     MIN_MENU_WIDTH = 0
     EXTRA_WIDTH = 0
@@ -266,7 +281,7 @@ class RoundedContextTextEdit(QTextEdit):
                     last_was_separator = True
                 continue
 
-            text = act.text().split("\t")[0].replace("&", "").strip()
+            text = _normalize_action_text(act.text())
             if not text:
                 continue
 
@@ -300,7 +315,7 @@ class RoundedContextLineEdit(QLineEdit):
                     last_was_separator = True
                 continue
 
-            text = act.text().split("\t")[0].replace("&", "").strip()
+            text = _normalize_action_text(act.text())
             if not text:
                 continue
 
