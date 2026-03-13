@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QObject
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QGuiApplication, QFontMetrics
+from PySide6.QtCore import Qt, Signal, QPoint, QTimer, QObject, QSize
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QGuiApplication, QFontMetrics, QIcon, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -59,6 +60,69 @@ QFrame#MenuSeparator {
 """
 
 
+_MENU_SVG_ICONS = {
+    "copy": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="9" width="10" height="10" rx="2"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/>
+</svg>
+''',
+    "paste": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 21H8a2 2 0 0 1-2-2V7h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2Z"/>
+    <path d="M16 3H8a2 2 0 0 0-2 2v2h12V5a2 2 0 0 0-2-2Z"/>
+    <path d="M10 12h4"/>
+</svg>
+''',
+    "cut": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="6" cy="6" r="3"/>
+    <circle cx="6" cy="18" r="3"/>
+    <path d="M20 4L8.12 15.88"/>
+    <path d="M14.47 14.48L20 20"/>
+    <path d="M8.12 8.12L12 12"/>
+</svg>
+''',
+    "delete": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 6h18"/>
+    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+    <path d="M10 11v6"/>
+    <path d="M14 11v6"/>
+</svg>
+''',
+    "select_all": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+    <path d="M16 3h3a2 2 0 0 1 2 2v3"/>
+    <path d="M8 21H5a2 2 0 0 1-2-2v-3"/>
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+    <rect x="8" y="8" width="8" height="8" rx="1.5"/>
+</svg>
+''',
+    "undo": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 14 4 9l5-5"/>
+    <path d="M4 9h9a7 7 0 1 1 0 14h-1"/>
+</svg>
+''',
+    "redo": '''
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m15 14 5-5-5-5"/>
+    <path d="M20 9h-9a7 7 0 1 0 0 14h1"/>
+</svg>
+''',
+}
+
+
 def _normalize_action_text(text: str) -> str:
     clean = text.split("\t")[0].replace("&", "").strip()
     mapping = {
@@ -72,6 +136,39 @@ def _normalize_action_text(text: str) -> str:
         "paste and match style": "粘贴并匹配样式",
     }
     return mapping.get(clean.lower(), clean)
+
+
+def _action_icon_key(text: str) -> str | None:
+    clean = text.split("\t")[0].replace("&", "").strip().lower()
+    mapping = {
+        "undo": "undo",
+        "redo": "redo",
+        "cut": "cut",
+        "copy": "copy",
+        "paste": "paste",
+        "delete": "delete",
+        "select all": "select_all",
+        "paste and match style": "paste",
+    }
+    return mapping.get(clean)
+
+
+def _make_menu_icon(icon_key: str, color: str = "#6b7280") -> QIcon:
+    svg = _MENU_SVG_ICONS.get(icon_key)
+    if not svg:
+        return QIcon()
+
+    svg_data = svg.format(color=color).encode("utf-8")
+    pixmap = QPixmap(14, 14)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    renderer = QSvgRenderer(svg_data)
+    renderer.render(painter)
+    painter.end()
+
+    return QIcon(pixmap)
 
 
 class _MenuAction(QObject):
@@ -144,7 +241,7 @@ class RoundedMenu(QDialog):
         self._vbox.setContentsMargins(self.PANEL_MARGIN, self.PANEL_MARGIN, self.PANEL_MARGIN, self.PANEL_MARGIN)
         self._vbox.setSpacing(2)
 
-    def addAction(self, text: str, enabled: bool = True) -> _MenuAction:
+    def addAction(self, text: str, enabled: bool = True, icon_key: str | None = None) -> _MenuAction:
         btn = QPushButton(text, self._panel)
         btn.setObjectName("MenuItem")
         btn.setEnabled(enabled)
@@ -159,10 +256,14 @@ class RoundedMenu(QDialog):
         btn.setFixedHeight(self.ITEM_HEIGHT)
         btn.setMinimumWidth(0)
         btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        if icon_key:
+            btn.setIcon(_make_menu_icon(icon_key))
+            btn.setIconSize(QSize(14, 14))
 
         btn.ensurePolished()
         text_width = QFontMetrics(btn.font()).horizontalAdvance(text)
-        self._max_text_width = max(self._max_text_width, text_width)
+        icon_width = 22 if icon_key else 0
+        self._max_text_width = max(self._max_text_width, text_width + icon_width)
 
         action = _MenuAction(text, enabled, self)
         self._actions.append(action)
@@ -282,11 +383,13 @@ class RoundedContextTextEdit(QTextEdit):
                     last_was_separator = True
                 continue
 
-            text = _normalize_action_text(act.text())
+            raw_text = act.text()
+            text = _normalize_action_text(raw_text)
             if not text:
                 continue
 
-            custom_act = menu.addAction(text, act.isEnabled())
+            icon_key = _action_icon_key(raw_text)
+            custom_act = menu.addAction(text, act.isEnabled(), icon_key=icon_key)
             if act.isEnabled():
                 custom_act.triggered.connect(act.trigger)
 
@@ -316,11 +419,13 @@ class RoundedContextLineEdit(QLineEdit):
                     last_was_separator = True
                 continue
 
-            text = _normalize_action_text(act.text())
+            raw_text = act.text()
+            text = _normalize_action_text(raw_text)
             if not text:
                 continue
 
-            custom_act = menu.addAction(text, act.isEnabled())
+            icon_key = _action_icon_key(raw_text)
+            custom_act = menu.addAction(text, act.isEnabled(), icon_key=icon_key)
             if act.isEnabled():
                 custom_act.triggered.connect(act.trigger)
 
