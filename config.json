@@ -18,5 +18,12 @@
         "hex_mode": false,
         "add_newline": true,
         "newline_type": "\\r\\n"
+    },
+    "logging": {
+        "enabled": false,
+        "root_dir": "",
+        "file_format": ".log",
+        "record_all_tabs": true,
+        "selected_tabs": []
     }
 }

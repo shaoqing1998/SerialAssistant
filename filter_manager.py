@@ -1,10 +1,10 @@
 """
 filter_manager.py - 多 Tab 关键词过滤管理模块
-v0.37:
-- 关键词过滤改为实时生效（textChanged），不再需要按 Enter
-- 区分大小写 / 反选 checkbox 也实时生效
-- 只对新来的日志应用当前关键词，已显示的历史日志不受影响
-- "历史"按钮仍可用于用当前关键词重新过滤全部历史
+v0.37 → v0.38:
+- 关键词过滤实时生效（textChanged）
+- 筛选 tab 无关键词时不显示日志也不记录
+- 清空关键词时自动清空视图
+- ★ 新增：日志写入/关闭回调，供 LogManager 使用
 """
 
 from __future__ import annotations
@@ -16,13 +16,17 @@ from PySide6.QtWidgets import (
     QCheckBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
-from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor, QPainter, QPen
-from rounded_menu import RoundedMenu, RoundedContextTextEdit, RoundedContextLineEdit
+from PySide6.QtGui import (
+    QFont, QColor, QTextCharFormat, QTextCursor, QPainter, QPen
+)
+from rounded_menu import (
+    RoundedMenu, RoundedContextTextEdit, RoundedContextLineEdit
+)
 
 
-# ══════════════════════════════════════════════
+# ════════════════════════════════════════════
 # 单个过滤 Tab 的日志视图
-# ══════════════════════════════════════════════
+# ════════════════════════════════════════════
 class FilteredLogView(RoundedContextTextEdit):
     def __init__(self, keywords: list[str] = None,
                  case_sensitive: bool = False,
@@ -37,13 +41,16 @@ class FilteredLogView(RoundedContextTextEdit):
         self._max_lines = 5000
 
         self.setReadOnly(True)
-        self.setLineWrapMode(RoundedContextTextEdit.LineWrapMode.NoWrap)
+        self.setLineWrapMode(
+            RoundedContextTextEdit.LineWrapMode.NoWrap
+        )
         font = QFont("Consolas", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
         self.setStyleSheet(
-            "QTextEdit { border: 1px solid #e5e7eb; border-radius: 6px; "
-            "background: #ffffff; color: #1e293b; padding: 2px; }"
+            "QTextEdit { border: 1px solid #e5e7eb; "
+            "border-radius: 6px; background: #ffffff; "
+            "color: #1e293b; padding: 2px; }"
         )
 
     def set_auto_scroll(self, v: bool):
@@ -78,8 +85,10 @@ class FilteredLogView(RoundedContextTextEdit):
         cursor = QTextCursor(self.document())
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         for _ in range(n):
-            cursor.movePosition(QTextCursor.MoveOperation.Down,
-                                QTextCursor.MoveMode.KeepAnchor)
+            cursor.movePosition(
+                QTextCursor.MoveOperation.Down,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
         cursor.removeSelectedText()
         self._line_count -= n
 
@@ -91,30 +100,30 @@ class FilteredLogView(RoundedContextTextEdit):
     def to_hex(data: bytes) -> str:
         lines = []
         for i in range(0, len(data), 16):
-            chunk = data[i:i+16]
+            chunk = data[i : i + 16]
             lines.append(" ".join(f"{b:02X}" for b in chunk))
         return "\n".join(lines) + "\n"
 
 
-# ══════════════════════════════════════════════
-# 自定义 TabBar：
-#   - 右键菜单（重命名/关闭）
-#   - 蓝线固定宽度 20px，底部居中
-#   - 点击 + Tab 发出信号
-# ══════════════════════════════════════════════
+# ════════════════════════════════════════════
+# 自定义 TabBar
+# ════════════════════════════════════════════
 _BLUE_LINE_W = 20
 _BLUE_LINE_H = 2
-_BLUE_COLOR  = QColor("#2563eb")
-_PLUS_DATA   = "__plus__"
+_BLUE_COLOR = QColor("#2563eb")
+_PLUS_DATA = "__plus__"
 
 
 class RenamableTabBar(QTabBar):
     tab_rename_requested = Signal(int)
-    add_tab_requested    = Signal()
+    add_tab_requested = Signal()
 
     def mousePressEvent(self, event):
         idx = self.tabAt(event.position().toPoint())
-        if idx == self.count() - 1 and self.tabData(idx) == _PLUS_DATA:
+        if (
+            idx == self.count() - 1
+            and self.tabData(idx) == _PLUS_DATA
+        ):
             if event.button() == Qt.MouseButton.LeftButton:
                 self.add_tab_requested.emit()
                 return
@@ -128,12 +137,10 @@ class RenamableTabBar(QTabBar):
             return
         if self.tabText(idx).strip() == "main":
             return
-
         menu = RoundedMenu(self.window())
         act_rename = menu.addAction("重命名")
         menu.addSeparator()
         act_close = menu.addAction("关闭")
-
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
@@ -150,10 +157,12 @@ class RenamableTabBar(QTabBar):
             return
         rect: QRect = self.tabRect(cur)
         from PySide6.QtWidgets import QStyleOptionTab
+
         opt = QStyleOptionTab()
         self.initStyleOption(opt, cur)
         text_rect = self.style().subElementRect(
-            self.style().SubElement.SE_TabBarTabText, opt, self)
+            self.style().SubElement.SE_TabBarTabText, opt, self
+        )
         if text_rect.isValid():
             cx = text_rect.x() + text_rect.width() / 2.0
         else:
@@ -161,7 +170,9 @@ class RenamableTabBar(QTabBar):
         x = round(cx - _BLUE_LINE_W / 2.0)
         y = rect.bottom() - _BLUE_LINE_H + 1
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setRenderHint(
+            QPainter.RenderHint.Antialiasing, False
+        )
         pen = QPen(_BLUE_COLOR, _BLUE_LINE_H)
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         painter.setPen(pen)
@@ -169,17 +180,20 @@ class RenamableTabBar(QTabBar):
         painter.end()
 
 
-# ══════════════════════════════════════════════
+# ════════════════════════════════════════════
 # 过滤器管理器（多 Tab）
-# ══════════════════════════════════════════════
+# ════════════════════════════════════════════
 class FilterManager(QWidget):
     filter_changed = Signal()
 
-    def __init__(self, config: dict,
-                 h_margin: int = 10,
-                 right_width: int = 272,
-                 toggle_send_callback: Callable | None = None,
-                 parent=None):
+    def __init__(
+        self,
+        config: dict,
+        h_margin: int = 10,
+        right_width: int = 272,
+        toggle_send_callback: Callable | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._config = config
         self._h_margin = h_margin
@@ -189,7 +203,31 @@ class FilterManager(QWidget):
         self._auto_scroll = True
         self._line_buffer = ""
         self._history: list[tuple[str, str]] = []
+
+        # ★ 日志记录回调
+        self._log_write_cb: Callable | None = None
+        self._log_close_cb: Callable | None = None
+
         self._init_ui()
+
+    # ★ 新增方法 ─────────────────────────────
+
+    def set_log_callbacks(
+        self, write_cb: Callable, close_tab_cb: Callable
+    ):
+        """设置日志记录回调（由 MainWindow 调用）"""
+        self._log_write_cb = write_cb
+        self._log_close_cb = close_tab_cb
+
+    def get_tab_names(self) -> list[str]:
+        """返回所有 tab 名称（不含 + tab）"""
+        names = []
+        for i in range(self._tabs.count()):
+            if self._tab_bar.tabData(i) != _PLUS_DATA:
+                names.append(self._tabs.tabText(i).strip())
+        return names
+
+    # ── UI 构建 ───────────────────────────────
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -200,9 +238,15 @@ class FilterManager(QWidget):
         self._tabs.setDocumentMode(True)
         self._tab_bar = RenamableTabBar()
         self._tabs.setTabBar(self._tab_bar)
-        self._tab_bar.tab_rename_requested.connect(self._rename_tab)
-        self._tab_bar.add_tab_requested.connect(self._add_new_tab)
-        self._tab_bar.tabCloseRequested.connect(self._close_tab_by_idx)
+        self._tab_bar.tab_rename_requested.connect(
+            self._rename_tab
+        )
+        self._tab_bar.add_tab_requested.connect(
+            self._add_new_tab
+        )
+        self._tab_bar.tabCloseRequested.connect(
+            self._close_tab_by_idx
+        )
         self._tabs.setTabsClosable(False)
         self._tabs.setMovable(False)
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -237,9 +281,9 @@ class FilterManager(QWidget):
         self._kw_edit = RoundedContextLineEdit()
         self._kw_edit.setObjectName("KwEdit")
         self._kw_edit.setPlaceholderText(
-            "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 实时生效"
+            "关键词过滤（多个关键词用 | 分隔，"
+            "如: error|warn|fail）— 实时生效"
         )
-        # ★ 改为 textChanged 实时生效，不再需要按 Enter
         self._kw_edit.textChanged.connect(self._apply_kw)
         h.addWidget(self._kw_edit, stretch=1)
 
@@ -252,14 +296,14 @@ class FilterManager(QWidget):
         self._chk_case = QCheckBox("区分大小写")
         self._chk_invert = QCheckBox("反选")
         self._chk_invert.setToolTip("显示不包含关键词的行")
-
-        # ★ checkbox 也实时生效
         self._chk_case.toggled.connect(self._apply_kw)
         self._chk_invert.toggled.connect(self._apply_kw)
 
         self._btn_refilter = QPushButton("历史")
         self._btn_refilter.setObjectName("BtnRefilter")
-        self._btn_refilter.setToolTip("用当前关键词重新过滤已有历史数据")
+        self._btn_refilter.setToolTip(
+            "用当前关键词重新过滤已有历史数据"
+        )
         self._btn_refilter.clicked.connect(self._refilter)
 
         self._btn_toggle = QPushButton("▼")
@@ -268,7 +312,9 @@ class FilterManager(QWidget):
         self._btn_toggle.setFixedSize(30, 30)
         self._btn_toggle.setToolTip("隐藏/显示发送区")
         if self._toggle_send_cb:
-            self._btn_toggle.clicked.connect(self._toggle_send_cb)
+            self._btn_toggle.clicked.connect(
+                self._toggle_send_cb
+            )
 
         right_h.addWidget(self._chk_case)
         right_h.addWidget(self._chk_invert)
@@ -279,13 +325,17 @@ class FilterManager(QWidget):
         h.addWidget(right_box)
         return bar
 
+    # ── Tab 管理 ──────────────────────────────
+
     def _find_plus_idx(self) -> int:
         for i in range(self._tabs.count()):
             if self._tab_bar.tabData(i) == _PLUS_DATA:
                 return i
         return -1
 
-    def _add_tab(self, name: str, closable: bool = True) -> int:
+    def _add_tab(
+        self, name: str, closable: bool = True
+    ) -> int:
         view = FilteredLogView()
         view.set_auto_scroll(self._auto_scroll)
         plus_idx = self._find_plus_idx()
@@ -306,7 +356,9 @@ class FilterManager(QWidget):
                 except Exception:
                     pass
         n = max(existing) + 1 if existing else 1
-        new_idx = self._add_tab(f"filter-{n:02d}", closable=True)
+        new_idx = self._add_tab(
+            f"filter-{n:02d}", closable=True
+        )
         self._tabs.setCurrentIndex(new_idx)
 
     def _close_tab_by_idx(self, idx: int):
@@ -315,6 +367,9 @@ class FilterManager(QWidget):
             return
         if self._tab_bar.tabData(idx) == _PLUS_DATA:
             return
+        # ★ 通知日志管理器关闭对应文件
+        if self._log_close_cb:
+            self._log_close_cb(name)
         self._tabs.removeTab(idx)
 
     def _rename_tab(self, idx: int):
@@ -338,32 +393,38 @@ class FilterManager(QWidget):
         view = self._tabs.widget(idx)
         if view is None:
             return
-        is_main = (self._tabs.tabText(idx).strip() == "main")
+        is_main = self._tabs.tabText(idx).strip() == "main"
 
         self._kw_edit.setEnabled(not is_main)
         self._chk_case.setEnabled(not is_main)
         self._chk_invert.setEnabled(not is_main)
         self._btn_refilter.setEnabled(not is_main)
 
-        # ★ 切 Tab 时阻塞信号，防止 textChanged/toggled 误触发 _apply_kw
         self._kw_edit.blockSignals(True)
         self._chk_case.blockSignals(True)
         self._chk_invert.blockSignals(True)
 
         if is_main:
-            self._kw_edit.setPlaceholderText("main 窗口显示所有数据（不过滤）")
+            self._kw_edit.setPlaceholderText(
+                "main 窗口显示所有数据（不过滤）"
+            )
             self._kw_edit.clear()
         elif isinstance(view, FilteredLogView):
             self._kw_edit.setPlaceholderText(
-                "关键词过滤（多个关键词用 | 分隔，如: error|warn|fail）— 实时生效"
+                "关键词过滤（多个关键词用 | 分隔）"
+                "— 实时生效"
             )
-            self._kw_edit.setText("|".join(view.keywords))
+            self._kw_edit.setText(
+                "|".join(view.keywords)
+            )
             self._chk_case.setChecked(view.case_sensitive)
             self._chk_invert.setChecked(view.invert)
 
         self._kw_edit.blockSignals(False)
         self._chk_case.blockSignals(False)
         self._chk_invert.blockSignals(False)
+
+    # ── 关键词 / 过滤 ──────────────────────────
 
     def _apply_kw(self):
         idx = self._tabs.currentIndex()
@@ -376,9 +437,15 @@ class FilterManager(QWidget):
         if self._tab_bar.tabData(idx) == _PLUS_DATA:
             return
         raw = self._kw_edit.text().strip()
-        view.keywords = [k.strip() for k in raw.split("|") if k.strip()]
+        view.keywords = [
+            k.strip() for k in raw.split("|") if k.strip()
+        ]
         view.case_sensitive = self._chk_case.isChecked()
         view.invert = self._chk_invert.isChecked()
+        # ★ 关键词清空时，清空视图
+        if not view.keywords:
+            view.clear()
+            view._line_count = 0
         self.filter_changed.emit()
 
     def _refilter(self):
@@ -387,21 +454,37 @@ class FilterManager(QWidget):
         view = self._tabs.widget(idx)
         if not isinstance(view, FilteredLogView):
             return
+        tab_name = self._tabs.tabText(idx).strip()
+        # ★ 筛选 tab 无关键词时不回溯
+        if tab_name != "main" and not view.keywords:
+            return
         view.clear()
         view._line_count = 0
         for line, color in self._history:
             if view.matches(line):
                 view.append_line(line, color)
 
+    # ── 公开接口 ──────────────────────────────
+
     def update_toggle_btn(self, send_visible: bool):
-        self._btn_toggle.setText("▼" if send_visible else "▲")
+        self._btn_toggle.setText(
+            "▼" if send_visible else "▲"
+        )
 
     def append_data(self, data: bytes):
-        text = FilteredLogView.to_hex(data) if self._show_hex else FilteredLogView.to_text(data)
+        text = (
+            FilteredLogView.to_hex(data)
+            if self._show_hex
+            else FilteredLogView.to_text(data)
+        )
         self._dispatch(text, "#1a6b3a")
 
     def append_sent(self, data: bytes):
-        text = FilteredLogView.to_hex(data) if self._show_hex else FilteredLogView.to_text(data)
+        text = (
+            FilteredLogView.to_hex(data)
+            if self._show_hex
+            else FilteredLogView.to_text(data)
+        )
         self._dispatch("[TX] " + text, "#92400e")
 
     def append_info(self, msg: str):
@@ -434,7 +517,6 @@ class FilterManager(QWidget):
                     v.clear()
                     v._line_count = 0
                 break
-
         current_idx = self._tabs.currentIndex()
         v = self._tabs.widget(current_idx)
         if isinstance(v, FilteredLogView):
@@ -451,6 +533,8 @@ class FilterManager(QWidget):
     def set_show_hex(self, v: bool):
         self._show_hex = v
 
+    # ── 核心分发 ──────────────────────────────
+
     def _dispatch(self, text: str, color: str):
         combined = self._line_buffer + text
         lines = combined.split('\n')
@@ -462,5 +546,15 @@ class FilterManager(QWidget):
                 self._history = self._history[-10000:]
             for i in range(self._tabs.count()):
                 v = self._tabs.widget(i)
-                if isinstance(v, FilteredLogView) and v.matches(full):
+                if not isinstance(v, FilteredLogView):
+                    continue
+                tab_name = self._tabs.tabText(i).strip()
+                is_main = tab_name == "main"
+                # ★ 筛选 tab 没有关键词时，不显示也不记录
+                if not is_main and not v.keywords:
+                    continue
+                if v.matches(full):
                     v.append_line(full, color)
+                    # ★ 写入日志文件
+                    if self._log_write_cb:
+                        self._log_write_cb(tab_name, full)
