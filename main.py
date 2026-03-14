@@ -400,7 +400,6 @@ class MainWindow(FramelessMainWindow):
                 layout.insertWidget(
                     idx, self._btn_settings
                 )
-                layout.insertSpacing(idx + 1, 6)
         except AttributeError:
             tb.layout().addWidget(self._btn_settings)
 

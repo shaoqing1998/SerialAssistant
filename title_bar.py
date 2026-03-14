@@ -1,17 +1,39 @@
 """
 title_bar.py - 标题栏设置按钮组件
-v0.43 — 标准填充齿轮图标 + 动态匹配原生按钮尺寸
-★ 齿轮采用主流软件标准样式（6齿填充 + 中心圆孔）
+v0.43 — Lucide 标准 SVG 齿轮图标 + 动态匹配原生按钮尺寸
+★ 齿轮采用 Lucide settings 图标（QSvgRenderer 渲染）
 ★ 运行时 match_native_size() 匹配原生 min/max/close 按钮
-★ 去除所有图标相关代码
 """
 from __future__ import annotations
 
-import math
-
 from PySide6.QtWidgets import QPushButton
-from PySide6.QtCore import Qt, QPointF, QRectF
-from PySide6.QtGui import QPainter, QColor, QPainterPath
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter, QColor, QPixmap
+from PySide6.QtSvg import QSvgRenderer
+
+
+# ★ Lucide 标准 settings 齿轮 SVG
+_GEAR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
+
+
+def _render_gear(color: str, size: int = 16) -> QPixmap:
+    """将 SVG 齿轮渲染为 QPixmap（支持 HiDPI 清晰渲染）"""
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QRectF
+    screen = QApplication.primaryScreen()
+    dpr = screen.devicePixelRatio() if screen else 1.0
+    real = int(size * dpr)
+    svg_data = _GEAR_SVG.format(color=color).encode("utf-8")
+    pixmap = QPixmap(real, real)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap.setDevicePixelRatio(dpr)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    renderer = QSvgRenderer(svg_data)
+    # ★ 显式指定逻辑目标矩形，防止 HiDPI 下内容被裁剪
+    renderer.render(painter, QRectF(0, 0, size, size))
+    painter.end()
+    return pixmap
 
 
 class SettingsButton(QPushButton):
@@ -63,58 +85,16 @@ class SettingsButton(QPushButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         # ★ 方形背景，无倒角（与原生按钮一致）
         if self._pressed:
-            p.fillRect(self.rect(), QColor("#d1d5db"))
+            p.fillRect(self.rect(), QColor("#c8c8c8"))
         elif self._hovered:
-            p.fillRect(self.rect(), QColor("#e5e7eb"))
+            p.fillRect(self.rect(), QColor("#dcdcdc"))
 
-        # ★ 标准齿轮图标（主流设置按钮样式）
-        # 6 齿填充齿轮 + 中心圆孔
-        fg = QColor("#5f6368")
-        cx, cy = self.width() / 2, self.height() / 2
-
-        teeth = 6
-        r_tip = 7.0       # 齿尖半径
-        r_root = 5.0      # 齿根半径
-        r_hole = 2.6      # 中心孔半径
-
-        tooth_arc = 2 * math.pi / teeth
-        tooth_half = tooth_arc * 0.28   # 齿顶半角宽
-
-        gear = QPainterPath()
-        for i in range(teeth):
-            a = tooth_arc * i - math.pi / 2
-            # 齿顶（flat top）
-            t1 = a - tooth_half
-            t2 = a + tooth_half
-            # 齿谷（flat bottom）
-            valley = a + tooth_arc / 2
-            v1 = valley - tooth_half
-            v2 = valley + tooth_half
-
-            p0 = QPointF(cx + r_tip * math.cos(t1),
-                         cy + r_tip * math.sin(t1))
-            p1 = QPointF(cx + r_tip * math.cos(t2),
-                         cy + r_tip * math.sin(t2))
-            p2 = QPointF(cx + r_root * math.cos(v1),
-                         cy + r_root * math.sin(v1))
-            p3 = QPointF(cx + r_root * math.cos(v2),
-                         cy + r_root * math.sin(v2))
-
-            if i == 0:
-                gear.moveTo(p0)
-            else:
-                gear.lineTo(p0)
-            gear.lineTo(p1)
-            gear.lineTo(p2)
-            gear.lineTo(p3)
-        gear.closeSubpath()
-
-        # 中心圆孔
-        hole = QPainterPath()
-        hole.addEllipse(QPointF(cx, cy), r_hole, r_hole)
-        gear = gear.subtracted(hole)
-
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(fg)
-        p.drawPath(gear)
+        # ★ SVG 齿轮图标（用逻辑尺寸居中）
+        gear = _render_gear("#5f6368", 16)
+        dpr = gear.devicePixelRatio()
+        lw = int(gear.width() / dpr)
+        lh = int(gear.height() / dpr)
+        x = (self.width() - lw) // 2
+        y = (self.height() - lh) // 2
+        p.drawPixmap(x, y, gear)
         p.end()
