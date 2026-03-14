@@ -1,28 +1,39 @@
 """
 title_bar.py - 标题栏设置按钮组件
-v0.38 — 配合 pyqt-frameless-window 库使用
-仅保留平面设计齿轮图标按钮（窗口控制按钮由库原生提供）
+v0.43 — 标准填充齿轮图标 + 动态匹配原生按钮尺寸
+★ 齿轮采用主流软件标准样式（6齿填充 + 中心圆孔）
+★ 运行时 match_native_size() 匹配原生 min/max/close 按钮
+★ 去除所有图标相关代码
 """
 from __future__ import annotations
 
 import math
 
 from PySide6.QtWidgets import QPushButton
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtGui import QPainter, QColor, QPainterPath
 
 
 class SettingsButton(QPushButton):
-    """平面设计齿轮图标（QPainter 绘制）"""
+    """设置齿轮按钮 — 与原生标题栏按钮风格统一"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(38, 30)
+        # 默认尺寸，showEvent 时会被 match_native_size 覆盖
+        self.setFixedSize(46, 32)
         self.setFlat(True)
         self.setToolTip("设置")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._hovered = False
         self._pressed = False
+
+    def match_native_size(self, ref_btn):
+        """读取原生按钮的实际尺寸并匹配"""
+        if ref_btn:
+            w = ref_btn.width() or 46
+            h = ref_btn.height() or 32
+            if w > 0 and h > 0:
+                self.setFixedSize(w, h)
 
     # ── 鼠标状态 ──
     def enterEvent(self, e):
@@ -50,37 +61,60 @@ class SettingsButton(QPushButton):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # 背景
+        # ★ 方形背景，无倒角（与原生按钮一致）
         if self._pressed:
-            p.setBrush(QColor("#d1d5db"))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 4, 4)
+            p.fillRect(self.rect(), QColor("#d1d5db"))
         elif self._hovered:
-            p.setBrush(QColor("#e5e7eb"))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(self.rect(), 4, 4)
-        # 齿轮
+            p.fillRect(self.rect(), QColor("#e5e7eb"))
+
+        # ★ 标准齿轮图标（主流设置按钮样式）
+        # 6 齿填充齿轮 + 中心圆孔
         fg = QColor("#5f6368")
-        pen = QPen(fg, 1.2)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
         cx, cy = self.width() / 2, self.height() / 2
-        # 内圆
-        p.drawEllipse(QPointF(cx, cy), 3.2, 3.2)
-        # 外层齿牙（6 个）
-        r_out, r_tooth, half = 7.0, 8.8, 0.32
-        for i in range(6):
-            angle = math.pi / 3 * i - math.pi / 2
-            a1, a2 = angle - half, angle + half
-            pts = [
-                QPointF(cx + r_out * math.cos(a1), cy + r_out * math.sin(a1)),
-                QPointF(cx + r_tooth * math.cos(a1), cy + r_tooth * math.sin(a1)),
-                QPointF(cx + r_tooth * math.cos(a2), cy + r_tooth * math.sin(a2)),
-                QPointF(cx + r_out * math.cos(a2), cy + r_out * math.sin(a2)),
-            ]
-            p.drawLine(pts[0], pts[1])
-            p.drawLine(pts[1], pts[2])
-            p.drawLine(pts[2], pts[3])
+
+        teeth = 6
+        r_tip = 7.0       # 齿尖半径
+        r_root = 5.0      # 齿根半径
+        r_hole = 2.6      # 中心孔半径
+
+        tooth_arc = 2 * math.pi / teeth
+        tooth_half = tooth_arc * 0.28   # 齿顶半角宽
+
+        gear = QPainterPath()
+        for i in range(teeth):
+            a = tooth_arc * i - math.pi / 2
+            # 齿顶（flat top）
+            t1 = a - tooth_half
+            t2 = a + tooth_half
+            # 齿谷（flat bottom）
+            valley = a + tooth_arc / 2
+            v1 = valley - tooth_half
+            v2 = valley + tooth_half
+
+            p0 = QPointF(cx + r_tip * math.cos(t1),
+                         cy + r_tip * math.sin(t1))
+            p1 = QPointF(cx + r_tip * math.cos(t2),
+                         cy + r_tip * math.sin(t2))
+            p2 = QPointF(cx + r_root * math.cos(v1),
+                         cy + r_root * math.sin(v1))
+            p3 = QPointF(cx + r_root * math.cos(v2),
+                         cy + r_root * math.sin(v2))
+
+            if i == 0:
+                gear.moveTo(p0)
+            else:
+                gear.lineTo(p0)
+            gear.lineTo(p1)
+            gear.lineTo(p2)
+            gear.lineTo(p3)
+        gear.closeSubpath()
+
+        # 中心圆孔
+        hole = QPainterPath()
+        hole.addEllipse(QPointF(cx, cy), r_hole, r_hole)
+        gear = gear.subtracted(hole)
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(fg)
+        p.drawPath(gear)
         p.end()

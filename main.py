@@ -1,24 +1,31 @@
 """
-main.py - 串口调试助手 v0.38
-★ pyqt-frameless-window 库（Win11 原生按钮 + Snap Layout + 窗口阴影）
-★ 自定义设置按钮 + 日志记录引擎 + 全屏遮罩设置弹窗
+main.py - 串口调试助手 v0.43
+★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
+★ Snap Layout 通过 nativeEvent 拦截 WM_NCHITTEST 实现
+★ 去除全部图标代码、标题栏高度恢复库默认 32
 """
 import sys
 import os
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
+
+import ctypes
+import ctypes.wintypes
 from datetime import datetime
+
 from PySide6.QtWidgets import (
     QApplication, QWidget,
     QHBoxLayout, QVBoxLayout, QGridLayout,
     QComboBox, QPushButton, QLabel,
     QCheckBox, QSizePolicy,
     QMessageBox, QSpinBox, QStyledItemDelegate,
-    QInputDialog,
+    QInputDialog, QFileDialog,
 )
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import Qt, QTimer, QEvent, QPoint
 from PySide6.QtGui import QFont, QMouseEvent, QColor
+
 from qframelesswindow import FramelessMainWindow
 from config import load_config, save_config
 from serial_manager import SerialManager
@@ -27,23 +34,30 @@ from rounded_menu import RoundedMenu, RoundedContextTextEdit
 from title_bar import SettingsButton
 from log_manager import LogManager
 from settings_dialog import SettingsDialog
+
+
 # ── 全局常量
 _M = 10
 _OPTS_W = 192
 _BTN_W = 72
 _RIGHT_W = _OPTS_W + 8 + _BTN_W
+
+
 class _CenterDelegate(QStyledItemDelegate):
     def initStyleOption(self, option, index):
         super().initStyleOption(option, index)
         option.displayAlignment = (
             Qt.AlignmentFlag.AlignCenter
         )
+
+
 class _BaudComboBox(QComboBox):
-    def mousePressEvent(self, event: QMouseEvent):
+    def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.showPopup()
         else:
             super().mousePressEvent(event)
+
     def paintEvent(self, event):
         from PySide6.QtWidgets import (
             QStylePainter, QStyleOptionComboBox, QStyle,
@@ -60,6 +74,8 @@ class _BaudComboBox(QComboBox):
             Qt.AlignmentFlag.AlignCenter,
             self.currentText(),
         )
+
+
 STYLE = """
 * { outline: none; }
 QMainWindow, QWidget#AppRoot {
@@ -75,7 +91,6 @@ QWidget {
                  "Segoe UI", sans-serif;
     font-size: 14px;
 }
-/* ── 下拉框 ── */
 QComboBox {
     background: #ffffff;
     border: 1px solid #d1d5db;
@@ -110,7 +125,6 @@ QComboBox QAbstractItemView {
     selection-color: #1d4ed8;
     padding: 2px; outline: none;
 }
-/* ── 按钮基础 ── */
 QPushButton {
     background: #ffffff;
     border: 1px solid #d1d5db;
@@ -202,7 +216,6 @@ QPushButton#BtnTabClose {
 QPushButton#BtnTabClose:hover {
     background: #fee2e2; color: #dc2626;
 }
-/* ── TabWidget ── */
 QTabWidget { background: transparent; border: none; }
 QTabWidget::pane {
     border: none; background: transparent;
@@ -226,7 +239,6 @@ QTabBar::tab:selected {
     font-weight: 600;
 }
 QTabBar::tab:hover:!selected { color: #3b82f6; }
-/* ── 文本框 ── */
 QTextEdit {
     background: #ffffff; color: #1e293b;
     border: 1px solid #e5e7eb;
@@ -279,7 +291,6 @@ QCheckBox::indicator:disabled {
 QLabel { color: #374151; background: transparent; }
 QLabel#DotOn  { color: #16a34a; font-size: 14px; }
 QLabel#DotOff { color: #d1d5db; font-size: 14px; }
-/* ── 状态栏 ── */
 QStatusBar {
     background: #eef0f3; color: #6b7280;
     font-size: 13px; border: none;
@@ -326,27 +337,28 @@ QScrollBar::add-line, QScrollBar::sub-line {
     width: 0; height: 0;
 }
 """
+
+
 class MainWindow(FramelessMainWindow):
     BAUDRATES = [
         "1200", "2400", "4800", "9600", "14400",
         "19200", "38400", "57600", "115200",
         "230400", "460800", "921600",
     ]
+
     def __init__(self):
         super().__init__()
         self._cfg = load_config()
         self._serial = SerialManager()
         self._connected = False
-        self._start_time: datetime | None = None
+        self._start_time = None
         self._last_rx = self._last_tx = 0
-        self._known_ports: list[str] = []
+        self._known_ports = []
         self._send_visible = True
-        # ★ 日志记录管理器
         self._log_mgr = LogManager(self._cfg, parent=self)
         self._log_mgr.write_error.connect(self._on_log_error)
         self._setup_title_bar()
         self._build_ui()
-        # ★ 标题栏必须 raise 到最顶层，否则会被 centralWidget 遮挡
         self.titleBar.raise_()
         self._port_timer = QTimer(self)
         self._port_timer.timeout.connect(self._scan_ports)
@@ -357,30 +369,26 @@ class MainWindow(FramelessMainWindow):
         self._scan_ports()
         self._wire()
         self._center_on_screen()
-    # ── ★ 标题栏配置（pyqt-frameless-window）─────
+
+    # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        """配置库自带标题栏 + 添加设置按钮"""
-        self.setWindowTitle("串口调试助手  v0.38")
+        self.setWindowTitle("串口调试助手  v0.43")
         tb = self.titleBar
-        tb.setFixedHeight(34)
-        # 背景色
+        tb.setFixedHeight(32)  # ★ v0.43 库默认高度
         tb.setAutoFillBackground(True)
         palette = tb.palette()
         palette.setColor(
             palette.ColorRole.Window, QColor("#eef0f3")
         )
         tb.setPalette(palette)
-        # 标题样式
         if hasattr(tb, 'titleLabel'):
             tb.titleLabel.setStyleSheet(
                 "color: #374151; font-size: 13px;"
                 " font-weight: 600;"
                 " background: transparent;"
             )
-        # 隐藏默认图标
         if hasattr(tb, 'iconLabel'):
             tb.iconLabel.hide()
-        # ★ 添加设置按钮（插入到最小化按钮之前）
         self._btn_settings = SettingsButton()
         self._btn_settings.clicked.connect(
             self._open_settings
@@ -394,8 +402,8 @@ class MainWindow(FramelessMainWindow):
                 )
                 layout.insertSpacing(idx + 1, 6)
         except AttributeError:
-            # 降级：直接添加到布局
             tb.layout().addWidget(self._btn_settings)
+
     # ── UI 构建 ──────────────────────────
     def _build_ui(self):
         self.resize(
@@ -409,10 +417,9 @@ class MainWindow(FramelessMainWindow):
         root_v = QVBoxLayout(root)
         root_v.setContentsMargins(0, 0, 0, 0)
         root_v.setSpacing(0)
-        # 内容区（带边距）
         content = QWidget()
         vbox = QVBoxLayout(content)
-        vbox.setContentsMargins(_M, 38, _M, 4)  # top=38 给标题栏留空间
+        vbox.setContentsMargins(_M, 36, _M, 4)  # ★ v0.43: 36
         vbox.setSpacing(4)
         vbox.addWidget(self._make_toolbar())
         self._filter_mgr = FilterManager(
@@ -426,6 +433,7 @@ class MainWindow(FramelessMainWindow):
         vbox.addWidget(self._send_area)
         self._make_statusbar()
         root_v.addWidget(content, stretch=1)
+
     def _center_on_screen(self):
         from PySide6.QtGui import QGuiApplication
         screen = QGuiApplication.primaryScreen()
@@ -436,7 +444,8 @@ class MainWindow(FramelessMainWindow):
                 geo.height() - self.height()
             ) // 2
             self.move(x, y)
-    def _make_toolbar(self) -> QWidget:
+
+    def _make_toolbar(self):
         bar = QWidget()
         h = QHBoxLayout(bar)
         h.setContentsMargins(0, 0, 0, 0)
@@ -488,7 +497,8 @@ class MainWindow(FramelessMainWindow):
         self._btn_conn.setObjectName("BtnConnect")
         h.addWidget(self._btn_conn)
         return bar
-    def _make_send_area(self) -> QWidget:
+
+    def _make_send_area(self):
         AREA_H = 128
         area = QWidget()
         area.setFixedHeight(AREA_H)
@@ -623,6 +633,7 @@ class MainWindow(FramelessMainWindow):
         self._loop_timer = QTimer(self)
         self._loop_timer.timeout.connect(self._do_send)
         return area
+
     def _make_statusbar(self):
         sb = self.statusBar()
         sb.setSizeGripEnabled(False)
@@ -647,20 +658,77 @@ class MainWindow(FramelessMainWindow):
             self._lbl_rx_rate,
         ):
             sb.addPermanentWidget(w)
-    # ── ★ 设置弹窗（全屏遮罩模式）─────────
+
+    # ── ★ v0.43: Snap Layout（nativeEvent 拦截）──
+    def nativeEvent(self, eventType, message):
+        if eventType == b"windows_generic_MSG":
+            msg = ctypes.wintypes.MSG.from_address(
+                int(message)
+            )
+            if msg.message == 0x0084:  # WM_NCHITTEST
+                x = msg.lParam & 0xFFFF
+                y = (msg.lParam >> 16) & 0xFFFF
+                if x > 0x7FFF:
+                    x -= 0x10000
+                if y > 0x7FFF:
+                    y -= 0x10000
+                max_btn = self.titleBar.maxBtn
+                local = max_btn.mapFromGlobal(
+                    QPoint(x, y)
+                )
+                if max_btn.rect().contains(local):
+                    return True, 9  # HTMAXBUTTON
+        return super().nativeEvent(eventType, message)
+
+    # ── ★ v0.43: 首次显示匹配设置按钮尺寸 ──
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._btn_settings.match_native_size(
+            self.titleBar.maxBtn
+        )
+
+    # ── 设置弹窗 ─────────────────────────
     def _open_settings(self):
-        """打开设置弹窗（覆盖主窗口、点击外部关闭、实时保存）"""
         tab_names = self._filter_mgr.get_tab_names()
         dlg = SettingsDialog(
             self._cfg, tab_names, parent=self
         )
         dlg.exec()
-    def _on_log_error(self, msg: str):
+
+    def _on_log_error(self, msg):
         self._lbl_log_err.setText(
             "自动保存写入失败！"
         )
         self._lbl_log_err.show()
         QTimer.singleShot(5000, self._lbl_log_err.hide)
+
+    # ── ★ v0.43: 另存为 ─────────────────
+    def _save_as_tab(self, tab_name):
+        content = self._filter_mgr.get_tab_content(
+            tab_name
+        )
+        if not content:
+            QMessageBox.information(
+                self, "提示", "当前 Tab 没有内容"
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            f"另存为 — {tab_name}",
+            f"{tab_name}.log",
+            "Log Files (*.log);;"
+            "Text Files (*.txt);;"
+            "All Files (*)",
+        )
+        if path:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "保存失败", str(e)
+                )
+
     # ── 发送区折叠 ─────────────────────
     def _toggle_send_area(self):
         self._send_visible = not self._send_visible
@@ -668,6 +736,7 @@ class MainWindow(FramelessMainWindow):
         self._filter_mgr.update_toggle_btn(
             self._send_visible
         )
+
     # ── 信号连接 ───────────────────────
     def _wire(self):
         self._serial.data_received.connect(self._on_rx)
@@ -702,6 +771,11 @@ class MainWindow(FramelessMainWindow):
             self._log_mgr.write_line,
             self._log_mgr.close_tab,
         )
+        # ★ v0.43: 另存为回调
+        self._filter_mgr.set_save_as_callback(
+            self._save_as_tab
+        )
+
     def _on_clear_context_menu(self, pos):
         menu = RoundedMenu(self.window())
         act = menu.addAction("清空所有")
@@ -711,6 +785,7 @@ class MainWindow(FramelessMainWindow):
         menu.exec(
             self._btn_clear.mapToGlobal(pos)
         )
+
     # ── 键盘事件过滤 ───────────────────
     def eventFilter(self, obj, event):
         if (
@@ -733,6 +808,7 @@ class MainWindow(FramelessMainWindow):
                     self._do_send()
                     return True
         return super().eventFilter(obj, event)
+
     # ── 串口扫描 ───────────────────────
     def _scan_ports(self):
         if self._connected:
@@ -763,21 +839,25 @@ class MainWindow(FramelessMainWindow):
                 "（无可用端口）", userData=""
             )
         self._cb_port.blockSignals(False)
-    def _get_port(self) -> str:
+
+    def _get_port(self):
         d = self._cb_port.currentData()
         return d if d else ""
-    def _get_port_description(self) -> str:
+
+    def _get_port_description(self):
         text = self._cb_port.currentText()
         parts = text.split("  ", 1)
         return (
             parts[1].strip() if len(parts) > 1 else ""
         )
+
     # ── 连接 / 断开 ────────────────────
     def _toggle_conn(self):
         if self._connected:
             self._do_disconnect()
         else:
             self._do_connect()
+
     def _do_connect(self):
         port = self._get_port()
         if not port:
@@ -796,12 +876,14 @@ class MainWindow(FramelessMainWindow):
             QMessageBox.critical(
                 self, "连接失败", msg
             )
+
     def _do_disconnect(self):
         if self._loop_timer.isActive():
             self._loop_timer.stop()
             self._chk_loop.setChecked(False)
         _, msg = self._serial.disconnect()
         self._filter_mgr.append_info(msg)
+
     # ── 发送 ───────────────────────────
     def _do_send(self):
         if not self._connected:
@@ -837,8 +919,9 @@ class MainWindow(FramelessMainWindow):
             self._filter_mgr.append_error(
                 f"HEX 解析错误: {e}"
             )
+
     # ── 数据接收 ───────────────────────
-    def _on_rx(self, data: bytes):
+    def _on_rx(self, data):
         if self._chk_ts.isChecked():
             try:
                 ts = datetime.now().strftime(
@@ -854,10 +937,12 @@ class MainWindow(FramelessMainWindow):
             except Exception:
                 pass
         self._filter_mgr.append_data(data)
-    def _on_err(self, msg: str):
+
+    def _on_err(self, msg):
         self._filter_mgr.append_error(msg)
+
     # ── 连接状态变化 ───────────────────
-    def _on_conn_changed(self, connected: bool):
+    def _on_conn_changed(self, connected):
         self._connected = connected
         if connected:
             self._set_dot(True)
@@ -900,13 +985,15 @@ class MainWindow(FramelessMainWindow):
             self._start_time = None
             self._lbl_status.setText("已断开")
             self._log_mgr.stop_session()
-    def _set_dot(self, on: bool):
+
+    def _set_dot(self, on):
         n = "DotOn" if on else "DotOff"
         self._dot.setObjectName(n)
         self._dot.style().unpolish(self._dot)
         self._dot.style().polish(self._dot)
+
     # ── 波特率 ─────────────────────────
-    def _on_baud_changed(self, idx: int):
+    def _on_baud_changed(self, idx):
         text = self._cb_baud.itemText(idx)
         if text != "自定义...":
             return
@@ -980,13 +1067,15 @@ class MainWindow(FramelessMainWindow):
                 "custom_baudrates"
             ].sort()
             save_config(self._cfg)
-    def _on_loop_toggled(self, checked: bool):
+
+    def _on_loop_toggled(self, checked):
         if checked and self._connected:
             self._loop_timer.start(
                 self._spin_ms.value()
             )
         else:
             self._loop_timer.stop()
+
     # ── 状态栏刷新 ─────────────────────
     def _refresh_stat(self):
         rx = self._serial.rx_bytes
@@ -1013,13 +1102,15 @@ class MainWindow(FramelessMainWindow):
             )
         else:
             self._lbl_timer.setText("00:00:00")
+
     @staticmethod
-    def _fmt(n: int) -> str:
+    def _fmt(n):
         if n < 1024:
             return f"{n} B"
         if n < 1048576:
             return f"{n/1024:.1f} KB"
         return f"{n/1048576:.2f} MB"
+
     # ── 窗口事件 ───────────────────────
     def closeEvent(self, event):
         self._port_timer.stop()
@@ -1041,8 +1132,12 @@ class MainWindow(FramelessMainWindow):
         self._cfg["send"]["add_newline"] = (
             self._chk_nl.isChecked()
         )
+        self._cfg["ui"]["window_width"] = self.width()
+        self._cfg["ui"]["window_height"] = self.height()
         save_config(self._cfg)
         event.accept()
+
+
 def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -1053,5 +1148,7 @@ def main():
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
+
+
 if __name__ == "__main__":
     main()

@@ -28,7 +28,8 @@ QPushButton#MenuItem {
     padding: 0 14px;
     margin: 0;
     min-width: 0;
-    min-height: 34px;
+    font-size: 12px;
+    min-height: 30px;
 }
 
 QPushButton#MenuItem:hover {
@@ -249,7 +250,7 @@ class RoundedMenu(QDialog):
     BG_COLOR = QColor("#ffffff")
     BORDER_COLOR = QColor("#e5e7eb")
     H_PADDING = 14
-    ITEM_HEIGHT = 34
+    ITEM_HEIGHT = 30
     PANEL_MARGIN = 6
     MIN_MENU_WIDTH = 0
     EXTRA_WIDTH = 6

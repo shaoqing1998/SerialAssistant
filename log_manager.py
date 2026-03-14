@@ -1,6 +1,6 @@
 """
 log_manager.py - 日志文件记录引擎
-自动按目录结构保存串口日志，支持 50 MB 自动分片
+v0.42 — ★ 新增 session_dir 属性 + get_default_save_dir() 供另存为使用
 目录格式：<root>/YYYY-MM/dayDD/PORT-DESC-connectN-HHMMSS/TAB.log
 """
 
@@ -16,13 +16,10 @@ _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 def _safe_name(s: str) -> str:
-    """将文件名中的特殊字符替换为下划线"""
     return re.sub(r'[<>:"/\\|?*\s]+', '_', s).strip('_') or 'unknown'
 
 
 class LogManager(QObject):
-    """日志记录管理器"""
-
     write_error = Signal(str)
 
     def __init__(self, config: dict, parent=None):
@@ -37,23 +34,39 @@ class LogManager(QObject):
     def is_recording(self) -> bool:
         return self._recording
 
-    # ── 会话管理 ──────────────────────────────
+    # ★ 新增：供另存为使用 ──────────────────
 
-    def start_session(self, port: str, description: str):
-        """开始新的录制会话（串口连接时调用）"""
+    @property
+    def session_dir(self) -> str:
+        """当前会话目录路径"""
+        return self._session_dir
+
+    def get_default_save_dir(self) -> str:
+        """返回另存为的默认目录（当前会话目录，若无则返回 logs 根目录）"""
+        if self._session_dir and os.path.isdir(self._session_dir):
+            return self._session_dir
         log_cfg = self._config.get("logging", {})
-        if not log_cfg.get("enabled", False):
-            return
-
         root = log_cfg.get("root_dir", "").strip()
         if not root:
             root = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), "logs"
             )
+        return root
 
+    # ── 会话管理 ─────────────────────────
+
+    def start_session(self, port: str, description: str):
+        log_cfg = self._config.get("logging", {})
+        if not log_cfg.get("enabled", False):
+            return
+        root = log_cfg.get("root_dir", "").strip()
+        if not root:
+            root = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "logs",
+            )
         self._connect_count += 1
         now = datetime.now()
-
         year_month = now.strftime("%Y-%m")
         day_dir = f"day{now.day:02d}"
         port_safe = _safe_name(port)
@@ -63,7 +76,6 @@ class LogManager(QObject):
             f"{port_safe}-{desc_safe}"
             f"-connect{self._connect_count}-{time_str}"
         )
-
         self._session_dir = os.path.join(
             root, year_month, day_dir, session
         )
@@ -75,25 +87,21 @@ class LogManager(QObject):
             self._recording = False
 
     def stop_session(self):
-        """停止录制，关闭所有文件"""
         self._recording = False
         for lf in self._files.values():
             lf.close()
         self._files.clear()
 
-    # ── 写入 ─────────────────────────────────
+    # ── 写入 ─────────────────────────────
 
     def write_line(self, tab_name: str, text: str):
-        """写一行到指定 tab 的日志文件"""
         if not self._recording:
             return
         if not self._should_record_tab(tab_name):
             return
-
         ext = self._config.get("logging", {}).get(
             "file_format", ".log"
         )
-
         if tab_name not in self._files:
             safe = _safe_name(tab_name)
             path = os.path.join(
@@ -104,11 +112,9 @@ class LogManager(QObject):
                 self._files[tab_name] = lf
             else:
                 return
-
         self._files[tab_name].write(text)
 
     def close_tab(self, tab_name: str):
-        """关闭某个 tab 对应的日志文件"""
         if tab_name in self._files:
             self._files[tab_name].close()
             del self._files[tab_name]
@@ -117,13 +123,10 @@ class LogManager(QObject):
         log_cfg = self._config.get("logging", {})
         if log_cfg.get("record_all_tabs", True):
             return True
-        selected = log_cfg.get("selected_tabs", [])
-        return tab_name in selected
+        return tab_name in log_cfg.get("selected_tabs", [])
 
 
 class _LogFile:
-    """单个日志文件，支持 50 MB 自动分片"""
-
     def __init__(self, base_path: str, error_signal: Signal):
         self._base_path = base_path
         self._error_signal = error_signal
@@ -140,7 +143,8 @@ class _LogFile:
     def _open(self):
         try:
             self._file = open(
-                self._current_path, "a", encoding="utf-8", buffering=1
+                self._current_path, "a",
+                encoding="utf-8", buffering=1,
             )
         except Exception:
             self._error_signal.emit("自动保存写入失败！")
@@ -163,7 +167,6 @@ class _LogFile:
             self._file = None
 
     def _split(self):
-        """切换到新的分片文件"""
         self.close()
         self._part += 1
         base, ext = os.path.splitext(self._base_path)

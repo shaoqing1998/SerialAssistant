@@ -20,10 +20,13 @@
         "newline_type": "\\r\\n"
     },
     "logging": {
-        "enabled": false,
+        "enabled": true,
         "root_dir": "",
         "file_format": ".log",
-        "record_all_tabs": true,
-        "selected_tabs": []
+        "record_all_tabs": false,
+        "selected_tabs": [
+            "main",
+            "filter-01"
+        ]
     }
 }
