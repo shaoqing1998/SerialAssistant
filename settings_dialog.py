@@ -1,8 +1,8 @@
 """
 settings_dialog.py - 通用设置弹窗（全屏遮罩 + 居中面板）
-v0.44 — ★ 关闭按钮与主窗口一致（细 X + 圆角端点 + 红色 hover）
-        ★ 标题栏左侧齿轮图标 + "设置" 文字
-        ★ 其余逻辑不变
+v0.45 — ★ 重置按钮无边框设计（hover/pressed 仅背景色）
+        ★ 关闭按钮垂直居中修复
+        ★ 关闭按钮与主窗口一致 + 标题栏左侧齿轮图标
 """
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QCheckBox, QPushButton, QFileDialog, QWidget,
     QRadioButton, QScrollArea, QFrame, QStackedWidget,
-    QButtonGroup,
+    QButtonGroup, QLineEdit,
 )
-from PySide6.QtCore import Qt, QPoint, QRectF, Signal
+from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal
 from PySide6.QtGui import (
     QPainter, QPainterPath, QColor, QPen, QMouseEvent, QRegion,
     QPixmap,
@@ -31,12 +31,13 @@ _CHK_SS = (
     "QCheckBox { font-size: 13px; background: transparent;"
     "  spacing: 5px; }"
     "QCheckBox::indicator {"
-    "  width: 14px; height: 14px; }"
+    "  width: 12px; height: 12px;"
+    "  margin: 2px; }"
     "QCheckBox::indicator:unchecked {"
-    "  border: 1.5px solid #9ca3af;"
+    "  border: 1px solid #9ca3af;"
     "  border-radius: 3px; background: #ffffff; }"
     "QCheckBox::indicator:checked {"
-    "  border: 1.5px solid #2563eb;"
+    "  border: 1px solid #2563eb;"
     "  border-radius: 3px; background: #2563eb; }"
     "QCheckBox::indicator:hover {"
     "  border-color: #3b82f6; }"
@@ -51,16 +52,17 @@ _CHK_SS = (
 
 _RADIO_SS = (
     "QRadioButton { font-size: 13px;"
-    "  background: transparent; spacing: 5px; }"
+    "  background: transparent; spacing: 4px; }"
     "QRadioButton::indicator {"
-    "  width: 14px; height: 14px; }"
+    "  width: 10px; height: 10px;"
+    "  margin: 2px; }"
     "QRadioButton::indicator:unchecked {"
-    "  border: 1.5px solid #9ca3af;"
-    "  border-radius: 7px;"
+    "  border: 1px solid #9ca3af;"
+    "  border-radius: 5px;"
     "  background: #ffffff; }"
     "QRadioButton::indicator:checked {"
-    "  border: 1.5px solid #2563eb;"
-    "  border-radius: 7px;"
+    "  border: 1px solid #2563eb;"
+    "  border-radius: 5px;"
     "  background: #2563eb; }"
     "QRadioButton::indicator:hover {"
     "  border-color: #3b82f6; }"
@@ -69,6 +71,189 @@ _RADIO_SS = (
     "  border-color: #d1d5db;"
     "  background: #f0f0f0; }"
 )
+
+# ★ v0.45: 圆角滚动容器（叠加层边框，保证四边统一）
+class _BorderOverlay(QWidget):
+    """透明叠加层 — 在所有子控件之上绘制边框"""
+
+    def __init__(self, parent, radius=6):
+        super().__init__(parent)
+        self._radius = radius
+        self._border_color = QColor("#d1d5db")
+        # ★ 不拦截鼠标事件，保证下层可点击
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground, True
+        )
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # ★ 1.5px pen — 更粗更均匀
+        r = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+        p.setPen(QPen(self._border_color, 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r, self._radius, self._radius)
+        p.end()
+
+
+class _RoundedScrollContainer(QWidget):
+    """圆角滚动容器 — 背景在底层，边框在叠加层（保证四边统一）"""
+
+    def __init__(self, scroll_area: QScrollArea, parent=None):
+        super().__init__(parent)
+        self._scroll = scroll_area
+        self._radius = 6
+        self._bg_color = QColor("#ffffff")
+        # 内嵌 QScrollArea，去掉自身边框
+        self._scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+            "QScrollBar:vertical {"
+            "  width: 4px; background: transparent; }"
+            "QScrollBar::handle:vertical {"
+            "  background: #d1d5db;"
+            "  border-radius: 2px; }"
+            "QScrollBar::add-line, QScrollBar::sub-line {"
+            "  width: 0; height: 0; }"
+        )
+        self._scroll.viewport().setAutoFillBackground(False)
+        self._scroll.viewport().setStyleSheet(
+            "background: transparent;"
+        )
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(2, 2, 2, 2)
+        lay.setSpacing(0)
+        lay.addWidget(self._scroll)
+        # ★ 叠加层：在所有子控件之上绘制边框
+        self._overlay = _BorderOverlay(self, self._radius)
+        self._overlay.setGeometry(self.rect())
+        self._overlay.raise_()
+
+    def setMaximumHeight(self, h):
+        super().setMaximumHeight(h)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._overlay.setGeometry(self.rect())
+        self._overlay.raise_()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._overlay.setGeometry(self.rect())
+        self._overlay.raise_()
+
+    def paintEvent(self, event):
+        # ★ 只画背景，边框由 overlay 负责
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        bg_path = QPainterPath()
+        bg_path.addRoundedRect(r, self._radius, self._radius)
+        p.fillPath(bg_path, self._bg_color)
+        p.end()
+
+
+# ★ v0.45: 可切换列表项（圆形指示器替代 QCheckBox）
+class _TagChip(QWidget):
+    """列表选择项 — 圆形指示器 + 文字，无多选框"""
+    toggled = Signal(bool)
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self._text = text
+        self._checked = False
+        self._hovered = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
+        self.setFixedHeight(26)
+
+    def text(self):
+        return self._text
+
+    def isChecked(self):
+        return self._checked
+
+    def setChecked(self, checked):
+        if self._checked == checked:
+            return
+        self._checked = checked
+        self.update()
+        self.toggled.emit(checked)
+
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        if not self.isEnabled():
+            return
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(not self._checked)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        h = self.height()
+        w = self.width()
+        # ★ disabled 状态：灰色文字，不画指示器
+        if not self.isEnabled():
+            font = p.font()
+            font.setPixelSize(12)
+            p.setFont(font)
+            p.setPen(QColor("#c0c0c0"))
+            p.drawText(
+                QRectF(16.0, 0, w - 16.0, h),
+                Qt.AlignmentFlag.AlignVCenter
+                | Qt.AlignmentFlag.AlignLeft,
+                self._text,
+            )
+            p.end()
+            return
+        if self._checked:
+            # ★ 选中：浅蓝底 + 左侧蓝色竖线
+            bg_path = QPainterPath()
+            bg_path.addRoundedRect(QRectF(0, 0, w, h), 4, 4)
+            p.fillPath(bg_path, QColor("#ffffff"))
+            bar_h = 14.0
+            bar_y = (h - bar_h) / 2.0
+            bar_path = QPainterPath()
+            bar_path.addRoundedRect(
+                QRectF(4, bar_y, 2.5, bar_h), 1.2, 1.2
+            )
+            p.fillPath(bar_path, QColor("#2563eb"))
+            fg = QColor("#2563eb")
+        else:
+            # ★ 未选中：hover 时浅灰底，否则透明
+            if self._hovered:
+                hover_path = QPainterPath()
+                hover_path.addRoundedRect(
+                    QRectF(0, 0, w, h), 4, 4
+                )
+                p.fillPath(hover_path, QColor("#f9fafb"))
+            fg = QColor("#6b7280")
+        # ★ 文字
+        font = p.font()
+        font.setPixelSize(12)
+        p.setFont(font)
+        p.setPen(fg)
+        text_x = 16.0
+        p.drawText(
+            QRectF(text_x, 0, w - text_x, h),
+            Qt.AlignmentFlag.AlignVCenter
+            | Qt.AlignmentFlag.AlignLeft,
+            self._text,
+        )
+        p.end()
+
 
 # ★ 齿轮 SVG（与 title_bar.py 一致）
 _GEAR_SVG = (
@@ -171,15 +356,15 @@ class _CloseBtn(QWidget):
         pen = QPen(fg, 1.0)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
-        cx, cy = self.width() / 2, self.height() / 2
+        cx, cy = self.width() / 2.0, self.height() / 2.0
         d = 3.5
         p.drawLine(
-            QPoint(int(cx - d), int(cy - d)),
-            QPoint(int(cx + d), int(cy + d)),
+            QPointF(cx - d, cy - d),
+            QPointF(cx + d, cy + d),
         )
         p.drawLine(
-            QPoint(int(cx + d), int(cy - d)),
-            QPoint(int(cx - d), int(cy + d)),
+            QPointF(cx + d, cy - d),
+            QPointF(cx - d, cy + d),
         )
         p.end()
 
@@ -207,14 +392,17 @@ class _NavBtn(QPushButton):
 # 重置按钮
 # ═══════════════════════════════════════════
 class _ResetBtn(QPushButton):
+    """v0.45 — 无边框设计，hover/pressed 时才显示边框"""
+
     def __init__(self, parent=None):
         super().__init__("重置", parent)
-        self.setFixedSize(72, 30)
+        self.setFixedSize(52, 30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("将日志设置恢复为默认值")
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setMouseTracking(True)
         self._hovered = False
+        self._pressed = False
         self._apply_style()
 
     def enterEvent(self, e):
@@ -224,23 +412,41 @@ class _ResetBtn(QPushButton):
 
     def leaveEvent(self, e):
         self._hovered = False
+        self._pressed = False
         self._apply_style()
         super().leaveEvent(e)
 
+    def mousePressEvent(self, e):
+        self._pressed = True
+        self._apply_style()
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._pressed = False
+        self._apply_style()
+        super().mouseReleaseEvent(e)
+
     def _apply_style(self):
-        if self._hovered:
+        if self._pressed:
+            self.setStyleSheet(
+                "QPushButton { background: #fecaca;"
+                "  border: none;"
+                "  border-radius: 6px;"
+                "  font-size: 13px; color: #b91c1c; }"
+            )
+        elif self._hovered:
             self.setStyleSheet(
                 "QPushButton { background: #fee2e2;"
-                "  border: 1px solid #f87171;"
+                "  border: none;"
                 "  border-radius: 6px;"
                 "  font-size: 13px; color: #dc2626; }"
             )
         else:
             self.setStyleSheet(
-                "QPushButton { background: #f3f4f6;"
-                "  border: 1px solid #c5cbd3;"
+                "QPushButton { background: transparent;"
+                "  border: none;"
                 "  border-radius: 6px;"
-                "  font-size: 13px; color: #374151; }"
+                "  font-size: 13px; color: #6b7280; }"
             )
 
 
@@ -286,6 +492,7 @@ class SettingsDialog(QDialog):
         )
         self._panel = QWidget(self)
         self._panel.setFixedSize(PANEL_W, PANEL_H)
+        self._record_all = True  # ★ v0.45: 全选状态（新增tab是否自动勾选）
         self._init_panel()
         self._load()
         self._connect_auto_save()
@@ -320,7 +527,10 @@ class SettingsDialog(QDialog):
         top_h.addStretch(1)
         self._btn_close = _CloseBtn(corner_radius=RADIUS)
         self._btn_close.clicked.connect(self.close)
-        top_h.addWidget(self._btn_close)
+        top_h.addWidget(
+            self._btn_close,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
         top_h.addSpacing(6)  # 右侧留白
         root.addSpacing(4)  # 顶部留白
         root.addWidget(top_bar)
@@ -335,7 +545,7 @@ class SettingsDialog(QDialog):
         body_h.setSpacing(12)
 
         nav_w = QWidget()
-        nav_w.setFixedWidth(100)
+        nav_w.setFixedWidth(80)
         nav_v = QVBoxLayout(nav_w)
         nav_v.setContentsMargins(0, 0, 0, 0)
         nav_v.setSpacing(4)
@@ -394,32 +604,40 @@ class SettingsDialog(QDialog):
         lbl.setFixedHeight(28)
         lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         dir_h.addWidget(lbl)
-        self._lbl_dir = QLabel("（默认：程序目录/logs）")
+        self._lbl_dir = QLineEdit()
+        self._lbl_dir.setPlaceholderText("默认：程序目录/logs")
         self._lbl_dir.setStyleSheet(
-            "font-size: 12px; color: #6b7280;"
-            " background: #f9fafb;"
-            " border: 1px solid #b0b8c4;"
-            " border-radius: 4px; padding: 2px 8px;"
+            "QLineEdit { font-size: 12px; color: #374151;"
+            "  background: #ffffff;"
+            "  border: 1.5px solid #d1d5db;"
+            "  border-radius: 6px; padding: 0px 4px 2px 4px;"
+            "  min-height: 24px; max-height: 28px; }"
+            "QLineEdit:focus { border-color: #3b82f6; }"
+            "QLineEdit:disabled { background: #f3f4f6;"
+            "  color: #c0c0c0; border-color: #e5e7eb; }"
         )
         self._lbl_dir.setFixedHeight(28)
-        self._lbl_dir.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self._lbl_dir.setWordWrap(True)
         dir_h.addWidget(self._lbl_dir, stretch=1)
         btn_browse = QPushButton("浏览")
         btn_browse.setFixedSize(52, 28)
         btn_browse.setStyleSheet(
-            "QPushButton { background: #f3f4f6;"
-            "  border: 1px solid #b0b8c4;"
+            "QPushButton { background: transparent;"
+            "  border: none;"
             "  border-radius: 6px;"
-            "  padding: 0 12px; font-size: 13px;"
+            "  padding: 0; font-size: 13px;"
+            "  color: #6b7280;"
+            "  min-height: 28px; min-width: 52px; }"
+            "QPushButton:hover { background: #f3f4f6;"
             "  color: #374151; }"
-            "QPushButton:hover { background: #e5e7eb;"
-            "  border-color: #9ca3af; }"
-            "QPushButton:disabled { background: #f3f4f6;"
-            "  border-color: #e5e7eb; color: #c0c0c0; }"
+            "QPushButton:pressed { background: #e5e7eb; }"
+            "QPushButton:disabled { background: transparent;"
+            "  color: #c0c0c0; }"
         )
         btn_browse.clicked.connect(self._browse)
-        dir_h.addWidget(btn_browse)
+        dir_h.addWidget(
+            btn_browse,
+            alignment=Qt.AlignmentFlag.AlignVCenter,
+        )
         opts_v.addLayout(dir_h)
 
         fmt_h = QHBoxLayout()
@@ -440,19 +658,18 @@ class SettingsDialog(QDialog):
         fmt_h.addStretch(1)
         opts_v.addLayout(fmt_h)
 
-        self._chk_all = QCheckBox("全部 Tab（包括后续新建的）")
-        self._chk_all.setStyleSheet(_CHK_SS)
-        self._chk_all.toggled.connect(self._on_all_toggled)
-        opts_v.addWidget(self._chk_all)
-
         tab_inner = QWidget()
         tab_v = QVBoxLayout(tab_inner)
-        tab_v.setContentsMargins(4, 4, 4, 4)
-        tab_v.setSpacing(4)
+        tab_v.setContentsMargins(4, 6, 4, 6)
+        tab_v.setSpacing(2)
 
-        self._chk_select_all = QCheckBox("全选")
-        self._chk_select_all.setStyleSheet(_CHK_SS)
-        self._chk_select_all.toggled.connect(self._toggle_select_all)
+        # ★ v0.45: 全选项（独立控制，不自动联动）
+        self._chk_select_all = _TagChip(
+            "全选（新增 Tab 自动勾选）"
+        )
+        self._chk_select_all.toggled.connect(
+            self._toggle_select_all
+        )
         tab_v.addWidget(self._chk_select_all)
 
         sep = QFrame()
@@ -460,41 +677,37 @@ class SettingsDialog(QDialog):
         sep.setStyleSheet("background: #e5e7eb;")
         tab_v.addWidget(sep)
 
+        # ★ v0.45: 各 Tab 列表项
         for name in self._tab_names:
-            chk = QCheckBox(name)
-            chk.setStyleSheet(_CHK_SS)
-            chk.toggled.connect(self._on_tab_check_changed)
-            self._tab_checks.append(chk)
-            tab_v.addWidget(chk)
+            item = _TagChip(name)
+            item.toggled.connect(
+                self._on_tab_check_changed
+            )
+            self._tab_checks.append(item)
+            tab_v.addWidget(item)
         tab_v.addStretch(1)
 
         self._tab_scroll = QScrollArea()
         self._tab_scroll.setWidget(tab_inner)
         self._tab_scroll.setWidgetResizable(True)
-        self._tab_scroll.setMaximumHeight(120)
-        self._tab_scroll.setStyleSheet(
-            "QScrollArea { border: 1px solid #d1d5db;"
-            "  border-radius: 6px;"
-            "  background: #ffffff; }"
-            "QScrollBar:vertical {"
-            "  width: 4px; background: transparent; }"
-            "QScrollBar::handle:vertical {"
-            "  background: #d1d5db;"
-            "  border-radius: 2px; }"
-            "QScrollBar::add-line, QScrollBar::sub-line {"
-            "  width: 0; height: 0; }"
+        self._tab_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        tab_inner.setStyleSheet("background: transparent;")
+        # ★ QPainter 抗锯齿圆角容器
+        self._scroll_container = _RoundedScrollContainer(
+            self._tab_scroll
         )
-        opts_v.addWidget(self._tab_scroll)
+        self._scroll_container.setMaximumHeight(120)
+        opts_v.addWidget(self._scroll_container)
         opts_v.addStretch(1)
         v.addWidget(self._options_widget)
         return page
 
     def _on_enabled_toggled(self, checked):
         self._options_widget.setEnabled(checked)
-        if checked:
-            self._on_all_toggled(self._chk_all.isChecked())
 
     def _toggle_select_all(self, checked):
+        """★ v0.45: 用户点击全选 → record_all 跟随"""
+        self._record_all = checked
         for chk in self._tab_checks:
             chk.blockSignals(True)
             chk.setChecked(checked)
@@ -502,21 +715,14 @@ class SettingsDialog(QDialog):
         self._auto_save()
 
     def _on_tab_check_changed(self):
-        total = len(self._tab_checks)
-        selected = sum(1 for c in self._tab_checks if c.isChecked())
-        self._chk_select_all.blockSignals(True)
-        self._chk_select_all.setChecked(selected == total and total > 0)
-        self._chk_select_all.blockSignals(False)
+        """★ v0.45: 单独改 tab 不影响全选状态"""
         self._auto_save()
-
-    def _on_all_toggled(self, checked):
-        self._tab_scroll.setEnabled(not checked)
 
     def _connect_auto_save(self):
         self._chk_enabled.toggled.connect(self._auto_save)
         self._radio_log.toggled.connect(self._auto_save)
         self._radio_txt.toggled.connect(self._auto_save)
-        self._chk_all.toggled.connect(self._auto_save)
+        self._lbl_dir.textChanged.connect(self._auto_save)
 
     def _auto_save(self):
         self._write_to_config()
@@ -577,6 +783,7 @@ class SettingsDialog(QDialog):
         )
         if d:
             self._lbl_dir.setText(d)
+            self._lbl_dir.setCursorPosition(0)
             self._auto_save()
 
     def _load(self):
@@ -585,18 +792,28 @@ class SettingsDialog(QDialog):
             log_cfg.get("enabled", False)
         )
         root = log_cfg.get("root_dir", "")
-        if root:
-            self._lbl_dir.setText(root)
+        self._lbl_dir.setText(root)
+        self._lbl_dir.setCursorPosition(0)
         if log_cfg.get("file_format", ".log") == ".txt":
             self._radio_txt.setChecked(True)
         else:
             self._radio_log.setChecked(True)
-        if log_cfg.get("record_all_tabs", True):
-            self._chk_all.setChecked(True)
+        # ★ v0.45: 全选独立控制
+        self._record_all = log_cfg.get("record_all_tabs", True)
+        self._chk_select_all.blockSignals(True)
+        self._chk_select_all.setChecked(self._record_all)
+        self._chk_select_all.blockSignals(False)
+        if self._record_all:
+            for chk in self._tab_checks:
+                chk.blockSignals(True)
+                chk.setChecked(True)
+                chk.blockSignals(False)
         else:
             selected = log_cfg.get("selected_tabs", [])
             for chk in self._tab_checks:
+                chk.blockSignals(True)
                 chk.setChecked(chk.text() in selected)
+                chk.blockSignals(False)
 
     def _write_to_config(self):
         if "logging" not in self._config:
@@ -604,23 +821,18 @@ class SettingsDialog(QDialog):
         c = self._config["logging"]
         c["enabled"] = self._chk_enabled.isChecked()
         txt = self._lbl_dir.text()
-        c["root_dir"] = (
-            "" if txt.startswith("（") else txt
-        )
+        c["root_dir"] = txt.strip()
         c["file_format"] = (
             ".txt"
             if self._radio_txt.isChecked()
             else ".log"
         )
-        c["record_all_tabs"] = self._chk_all.isChecked()
-        if not self._chk_all.isChecked():
-            c["selected_tabs"] = [
-                chk.text()
-                for chk in self._tab_checks
-                if chk.isChecked()
-            ]
-        else:
-            c["selected_tabs"] = []
+        c["record_all_tabs"] = self._record_all
+        c["selected_tabs"] = [
+            chk.text()
+            for chk in self._tab_checks
+            if chk.isChecked()
+        ]
 
     def _reset(self):
         self._config["logging"] = {
@@ -631,14 +843,8 @@ class SettingsDialog(QDialog):
             "selected_tabs": [],
         }
         save_config(self._config)
+        self._record_all = True
         self._chk_enabled.setChecked(False)
-        self._lbl_dir.setText("（默认：程序目录/logs）")
+        self._lbl_dir.setText("")
         self._radio_log.setChecked(True)
-        self._chk_all.setChecked(True)
-        self._chk_select_all.blockSignals(True)
-        self._chk_select_all.setChecked(True)
-        self._chk_select_all.blockSignals(False)
-        for chk in self._tab_checks:
-            chk.blockSignals(True)
-            chk.setChecked(True)
-            chk.blockSignals(False)
+        self._chk_select_all.setChecked(True)  # 触发 _toggle_select_all → 全部勾选
