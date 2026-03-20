@@ -1,14 +1,8 @@
 """
 settings_dialog.py - 通用设置弹窗（全屏遮罩 + 居中面板）
-v0.43 — 第二轮 UI 全面修复
-★ 移除顶部"设置"标题和分隔线
-★ 关闭按钮 46x32 + 右上角圆角路径（红色不溢出面板圆角）
-★ 重置按钮 hover 修复（自定义 enterEvent/leaveEvent）
-★ 路径框/浏览按钮统一 28px 高度 + 垂直居中
-★ Tab 列表改用标准 QCheckBox（正确响应 setEnabled 视觉置灰）
-★ 全选 checkbox 在 tab 列表最顶上
-★ 全部 Tab 勾选 -> 置灰 tab 选择列表
-★ 不勾选启用日志 -> 所有选项视觉置灰
+v0.44 — ★ 关闭按钮与主窗口一致（细 X + 圆角端点 + 红色 hover）
+        ★ 标题栏左侧齿轮图标 + "设置" 文字
+        ★ 其余逻辑不变
 """
 from __future__ import annotations
 
@@ -18,15 +12,14 @@ from PySide6.QtWidgets import (
     QRadioButton, QScrollArea, QFrame, QStackedWidget,
     QButtonGroup,
 )
-from PySide6.QtCore import Qt, QPoint, QRectF
+from PySide6.QtCore import Qt, QPoint, QRectF, Signal
 from PySide6.QtGui import (
     QPainter, QPainterPath, QColor, QPen, QMouseEvent, QRegion,
+    QPixmap,
 )
+from PySide6.QtSvg import QSvgRenderer
 from config import save_config
 
-# ═══════════════════════════════════════════
-# 常量
-# ═══════════════════════════════════════════
 PANEL_W = 520
 PANEL_H = 480
 RADIUS = 10
@@ -34,7 +27,6 @@ BORDER_COLOR = QColor("#b0b8c4")
 BG_COLOR = QColor("#ffffff")
 OVERLAY_COLOR = QColor(0, 0, 0, 80)
 
-# ★ 统一 QCheckBox 样式（含 disabled 置灰态）
 _CHK_SS = (
     "QCheckBox { font-size: 13px; background: transparent;"
     "  spacing: 5px; }"
@@ -78,21 +70,60 @@ _RADIO_SS = (
     "  background: #f0f0f0; }"
 )
 
+# ★ 齿轮 SVG（与 title_bar.py 一致）
+_GEAR_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" '
+    'width="16" height="16" viewBox="0 0 24 24" '
+    'fill="none" stroke="{color}" stroke-width="1.8" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 '
+    '1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73'
+    'l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51'
+    'a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 '
+    '2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 '
+    '1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 '
+    '0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 '
+    '2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 '
+    '1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 '
+    '.73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 '
+    '1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>'
+    '<circle cx="12" cy="12" r="3"/></svg>'
+)
+
+
+def _render_mini_gear(color: str, size: int = 14) -> QPixmap:
+    """渲染小齿轮图标用于设置标题栏"""
+    from PySide6.QtWidgets import QApplication
+    screen = QApplication.primaryScreen()
+    dpr = screen.devicePixelRatio() if screen else 1.0
+    real = int(size * dpr)
+    svg_data = _GEAR_SVG.format(color=color).encode("utf-8")
+    pixmap = QPixmap(real, real)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap.setDevicePixelRatio(dpr)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    renderer = QSvgRenderer(svg_data)
+    renderer.render(painter, QRectF(0, 0, size, size))
+    painter.end()
+    return pixmap
+
 
 # ═══════════════════════════════════════════
-# ★ 关闭按钮（46x32 贴边，右上角圆角匹配面板）
+# ★ 关闭按钮（与主窗口 close 按钮完全一致的绘制风格）
 # ═══════════════════════════════════════════
-class _CloseBtn(QPushButton):
-    """贴边关闭按钮，右上角圆角防止红色溢出面板"""
+class _CloseBtn(QWidget):
+    """Notion 风格关闭按钮 — 灰色×号 + hover浅灰背景，无红色"""
+    clicked = Signal()
 
     def __init__(self, corner_radius=0, parent=None):
         super().__init__(parent)
-        self.setFixedSize(46, 32)
-        self.setFlat(True)
+        self.setFixedSize(28, 28)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
         self._hovered = False
         self._pressed = False
-        self._cr = corner_radius
 
     def enterEvent(self, e):
         self._hovered = True
@@ -106,52 +137,42 @@ class _CloseBtn(QPushButton):
         super().leaveEvent(e)
 
     def mousePressEvent(self, e):
-        self._pressed = True
-        self.update()
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
         super().mousePressEvent(e)
 
     def mouseReleaseEvent(self, e):
+        was_pressed = self._pressed
         self._pressed = False
         self.update()
+        if was_pressed and e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
         super().mouseReleaseEvent(e)
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        color = None
+        # ★ Notion 风格：hover 小圆圈背景
+        if self._pressed or self._hovered:
+            bg = QColor("#d2d2d2") if self._pressed else QColor("#e8e8e8")
+            cx, cy = self.width() / 2, self.height() / 2
+            radius = 11  # 小圆圈半径
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(bg)
+            p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
+        # ★ × 号
         if self._pressed:
-            color = QColor("#c42b1c")
+            fg = QColor("#3c4043")
         elif self._hovered:
-            color = QColor("#e81123")
-        if color:
-            # ★ 右上角圆角路径 -> 红色不会溢出面板圆角
-            r = self._cr
-            rect = QRectF(self.rect())
-            path = QPainterPath()
-            path.moveTo(0, rect.height())          # 左下
-            path.lineTo(0, 0)                      # 左上
-            path.lineTo(rect.width() - r, 0)       # 向右
-            if r > 0:
-                path.arcTo(
-                    rect.width() - 2 * r, 0,
-                    2 * r, 2 * r, 90, -90,
-                )                                  # 右上圆角
-            else:
-                path.lineTo(rect.width(), 0)
-            path.lineTo(rect.width(), rect.height())  # 右下
-            path.closeSubpath()
-            p.fillPath(path, color)
-        # x 号
-        fg = (
-            QColor("#ffffff")
-            if (self._hovered or self._pressed)
-            else QColor("#9ca3af")
-        )
+            fg = QColor("#5f6368")
+        else:
+            fg = QColor("#868686")
         pen = QPen(fg, 1.0)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
         cx, cy = self.width() / 2, self.height() / 2
-        d = 5
+        d = 3.5
         p.drawLine(
             QPoint(int(cx - d), int(cy - d)),
             QPoint(int(cx + d), int(cy + d)),
@@ -183,7 +204,7 @@ class _NavBtn(QPushButton):
 
 
 # ═══════════════════════════════════════════
-# ★ 重置按钮（自定义 enterEvent 修复从上方进入不高亮）
+# 重置按钮
 # ═══════════════════════════════════════════
 class _ResetBtn(QPushButton):
     def __init__(self, parent=None):
@@ -224,6 +245,30 @@ class _ResetBtn(QPushButton):
 
 
 # ═══════════════════════════════════════════
+# ★ 齿轮图标 Label（用于设置标题栏左侧）
+# ═══════════════════════════════════════════
+class _GearIconLabel(QLabel):
+    """在标题栏左侧显示齿轮图标"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(32, 32)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        gear = _render_mini_gear("#6b7280", 14)
+        dpr = gear.devicePixelRatio()
+        lw = int(gear.width() / dpr)
+        lh = int(gear.height() / dpr)
+        x = (self.width() - lw) // 2
+        y = (self.height() - lh) // 2
+        p.drawPixmap(x, y, gear)
+        p.end()
+
+
+# ═══════════════════════════════════════════
 # 主设置弹窗（全屏遮罩模式）
 # ═══════════════════════════════════════════
 class SettingsDialog(QDialog):
@@ -244,25 +289,40 @@ class SettingsDialog(QDialog):
         self._init_panel()
         self._load()
         self._connect_auto_save()
-        # ★ 初始化启用/禁用状态
         self._on_enabled_toggled(self._chk_enabled.isChecked())
 
-    # ── 面板 UI ────────────────────────────
     def _init_panel(self):
         root = QVBoxLayout(self._panel)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ★ 顶部：仅关闭按钮（无"设置"标题、无分隔线）
+        # ★ 顶部标题栏：齿轮图标 + "设置" 文字 + 关闭按钮
         top_bar = QWidget()
         top_bar.setFixedHeight(32)
         top_h = QHBoxLayout(top_bar)
         top_h.setContentsMargins(0, 0, 0, 0)
         top_h.setSpacing(0)
+
+        # ★ 左侧：齿轮图标 + "设置"
+        self._gear_icon = _GearIconLabel()
+        top_h.addWidget(self._gear_icon)
+        lbl_title = QLabel("设置")
+        lbl_title.setStyleSheet(
+            "font-size: 13px; font-weight: 600;"
+            " color: #374151; background: transparent;"
+        )
+        lbl_title.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter
+            | Qt.AlignmentFlag.AlignLeft
+        )
+        top_h.addWidget(lbl_title)
+
         top_h.addStretch(1)
         self._btn_close = _CloseBtn(corner_radius=RADIUS)
         self._btn_close.clicked.connect(self.close)
         top_h.addWidget(self._btn_close)
+        top_h.addSpacing(6)  # 右侧留白
+        root.addSpacing(4)  # 顶部留白
         root.addWidget(top_bar)
 
         # ── 内容区 ──
@@ -274,7 +334,6 @@ class SettingsDialog(QDialog):
         body_h = QHBoxLayout()
         body_h.setSpacing(12)
 
-        # 左侧导航
         nav_w = QWidget()
         nav_w.setFixedWidth(100)
         nav_v = QVBoxLayout(nav_w)
@@ -297,7 +356,6 @@ class SettingsDialog(QDialog):
         )
         content_v.addLayout(body_h, stretch=1)
 
-        # ★ 底部重置（自定义 _ResetBtn 修复 hover）
         content_v.addSpacing(12)
         bottom_h = QHBoxLayout()
         bottom_h.addStretch(1)
@@ -308,14 +366,12 @@ class SettingsDialog(QDialog):
 
         root.addWidget(content, stretch=1)
 
-    # ── 日志设置页 ────────────────────────
     def _build_log_page(self):
         page = QWidget()
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(10)
 
-        # 启用开关
         self._chk_enabled = QCheckBox(
             "启用实时日志记录（连接串口时自动开始）"
         )
@@ -323,13 +379,11 @@ class SettingsDialog(QDialog):
         self._chk_enabled.toggled.connect(self._on_enabled_toggled)
         v.addWidget(self._chk_enabled)
 
-        # ★ 可置灰区域（setEnabled 视觉生效）
         self._options_widget = QWidget()
         opts_v = QVBoxLayout(self._options_widget)
         opts_v.setContentsMargins(0, 0, 0, 0)
         opts_v.setSpacing(10)
 
-        # ★ 保存路径（统一 28px + 垂直居中）
         dir_h = QHBoxLayout()
         dir_h.setSpacing(6)
         lbl = QLabel("保存位置：")
@@ -368,7 +422,6 @@ class SettingsDialog(QDialog):
         dir_h.addWidget(btn_browse)
         opts_v.addLayout(dir_h)
 
-        # 文件格式
         fmt_h = QHBoxLayout()
         fmt_h.setSpacing(8)
         fmt_lbl = QLabel("文件格式：")
@@ -387,31 +440,26 @@ class SettingsDialog(QDialog):
         fmt_h.addStretch(1)
         opts_v.addLayout(fmt_h)
 
-        # "全部 Tab" 独立选项
         self._chk_all = QCheckBox("全部 Tab（包括后续新建的）")
         self._chk_all.setStyleSheet(_CHK_SS)
         self._chk_all.toggled.connect(self._on_all_toggled)
         opts_v.addWidget(self._chk_all)
 
-        # ★ Tab 选择列表（标准 QCheckBox 支持 setEnabled 置灰）
         tab_inner = QWidget()
         tab_v = QVBoxLayout(tab_inner)
         tab_v.setContentsMargins(4, 4, 4, 4)
         tab_v.setSpacing(4)
 
-        # ★ 全选 checkbox 在最顶上左边
         self._chk_select_all = QCheckBox("全选")
         self._chk_select_all.setStyleSheet(_CHK_SS)
         self._chk_select_all.toggled.connect(self._toggle_select_all)
         tab_v.addWidget(self._chk_select_all)
 
-        # 分隔线
         sep = QFrame()
         sep.setFixedHeight(1)
         sep.setStyleSheet("background: #e5e7eb;")
         tab_v.addWidget(sep)
 
-        # 个别 Tab checkbox
         for name in self._tab_names:
             chk = QCheckBox(name)
             chk.setStyleSheet(_CHK_SS)
@@ -441,16 +489,12 @@ class SettingsDialog(QDialog):
         v.addWidget(self._options_widget)
         return page
 
-    # ── ★ 启用/禁用日志选项 ──────────────
     def _on_enabled_toggled(self, checked):
         self._options_widget.setEnabled(checked)
         if checked:
-            # 重新应用 "全部 Tab" 的置灰逻辑
             self._on_all_toggled(self._chk_all.isChecked())
 
-    # ── Tab 列表逻辑 ─────────────────────
     def _toggle_select_all(self, checked):
-        """全选 checkbox -> 勾上/取消所有 tab"""
         for chk in self._tab_checks:
             chk.blockSignals(True)
             chk.setChecked(checked)
@@ -458,7 +502,6 @@ class SettingsDialog(QDialog):
         self._auto_save()
 
     def _on_tab_check_changed(self):
-        """某个 tab checkbox 变化 -> 同步全选状态"""
         total = len(self._tab_checks)
         selected = sum(1 for c in self._tab_checks if c.isChecked())
         self._chk_select_all.blockSignals(True)
@@ -467,10 +510,8 @@ class SettingsDialog(QDialog):
         self._auto_save()
 
     def _on_all_toggled(self, checked):
-        """全部 Tab -> 置灰 tab 选择列表（不改变选中状态）"""
         self._tab_scroll.setEnabled(not checked)
 
-    # ── 实时保存 ──────────────────────────
     def _connect_auto_save(self):
         self._chk_enabled.toggled.connect(self._auto_save)
         self._radio_log.toggled.connect(self._auto_save)
@@ -481,7 +522,6 @@ class SettingsDialog(QDialog):
         self._write_to_config()
         save_config(self._config)
 
-    # ── 绘制：遮罩 + 面板 ────────────────
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -496,14 +536,12 @@ class SettingsDialog(QDialog):
         p.drawPath(path)
         p.end()
 
-    # ── 点击遮罩区域关闭 ───────────────
     def mousePressEvent(self, event):
         if not self._panel.geometry().contains(event.pos()):
             self.close()
             return
         super().mousePressEvent(event)
 
-    # ── 显示时覆盖父窗口 ───────────────
     def showEvent(self, event):
         super().showEvent(event)
         if self.parent():
@@ -525,7 +563,6 @@ class SettingsDialog(QDialog):
         )
 
     def _clip_panel(self):
-        """面板圆角裁剪"""
         path = QPainterPath()
         path.addRoundedRect(
             QRectF(self._panel.rect()), RADIUS, RADIUS
@@ -534,7 +571,6 @@ class SettingsDialog(QDialog):
             QRegion(path.toFillPolygon().toPolygon())
         )
 
-    # ── 内部逻辑 ─────────────────────────
     def _browse(self):
         d = QFileDialog.getExistingDirectory(
             self, "选择日志保存目录"

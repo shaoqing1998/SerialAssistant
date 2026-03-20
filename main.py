@@ -1,18 +1,18 @@
 """
-main.py - 串口调试助手 v0.43
+main.py - 串口调试助手 v0.44
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
-★ Snap Layout 通过 nativeEvent 拦截 WM_NCHITTEST 实现
-★ 去除全部图标代码、标题栏高度恢复库默认 32
+★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
+★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
 """
 import sys
 import os
+import ctypes
+import ctypes.wintypes
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-import ctypes
-import ctypes.wintypes
 from datetime import datetime
 
 from PySide6.QtWidgets import (
@@ -24,19 +24,21 @@ from PySide6.QtWidgets import (
     QInputDialog, QFileDialog,
 )
 from PySide6.QtCore import Qt, QTimer, QEvent, QPoint
-from PySide6.QtGui import QFont, QMouseEvent, QColor
+from PySide6.QtGui import QFont, QMouseEvent, QColor, QCursor
 
 from qframelesswindow import FramelessMainWindow
 from config import load_config, save_config
 from serial_manager import SerialManager
 from filter_manager import FilterManager
 from rounded_menu import RoundedMenu, RoundedContextTextEdit
-from title_bar import SettingsButton
+from title_bar import (
+    SettingsButton,
+    customize_titlebar_buttons,
+)
 from log_manager import LogManager
 from settings_dialog import SettingsDialog
 
 
-# ── 全局常量
 _M = 10
 _OPTS_W = 192
 _BTN_W = 72
@@ -372,9 +374,9 @@ class MainWindow(FramelessMainWindow):
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.43")
+        self.setWindowTitle("串口调试助手  v0.44")
         tb = self.titleBar
-        tb.setFixedHeight(32)  # ★ v0.43 库默认高度
+        tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)
         palette = tb.palette()
         palette.setColor(
@@ -389,6 +391,8 @@ class MainWindow(FramelessMainWindow):
             )
         if hasattr(tb, 'iconLabel'):
             tb.iconLabel.hide()
+        # ★ v0.44: 覆盖 min/max/close 按钮绘制
+        customize_titlebar_buttons(tb)
         self._btn_settings = SettingsButton()
         self._btn_settings.clicked.connect(
             self._open_settings
@@ -403,7 +407,6 @@ class MainWindow(FramelessMainWindow):
         except AttributeError:
             tb.layout().addWidget(self._btn_settings)
 
-    # ── UI 构建 ──────────────────────────
     def _build_ui(self):
         self.resize(
             self._cfg["ui"]["window_width"],
@@ -418,7 +421,7 @@ class MainWindow(FramelessMainWindow):
         root_v.setSpacing(0)
         content = QWidget()
         vbox = QVBoxLayout(content)
-        vbox.setContentsMargins(_M, 36, _M, 4)  # ★ v0.43: 36
+        vbox.setContentsMargins(_M, 36, _M, 4)
         vbox.setSpacing(4)
         vbox.addWidget(self._make_toolbar())
         self._filter_mgr = FilterManager(
@@ -658,35 +661,84 @@ class MainWindow(FramelessMainWindow):
         ):
             sb.addPermanentWidget(w)
 
-    # ── ★ v0.43: Snap Layout（nativeEvent 拦截）──
-    def nativeEvent(self, eventType, message):
-        if eventType == b"windows_generic_MSG":
-            msg = ctypes.wintypes.MSG.from_address(
-                int(message)
-            )
-            if msg.message == 0x0084:  # WM_NCHITTEST
-                x = msg.lParam & 0xFFFF
-                y = (msg.lParam >> 16) & 0xFFFF
-                if x > 0x7FFF:
-                    x -= 0x10000
-                if y > 0x7FFF:
-                    y -= 0x10000
-                max_btn = self.titleBar.maxBtn
-                local = max_btn.mapFromGlobal(
-                    QPoint(x, y)
-                )
-                if max_btn.rect().contains(local):
-                    return True, 9  # HTMAXBUTTON
-        return super().nativeEvent(eventType, message)
-
-    # ── ★ v0.43: 首次显示匹配设置按钮尺寸 ──
+    # ── ★ v0.44: 首次显示匹配设置按钮尺寸 ──
     def showEvent(self, event):
         super().showEvent(event)
         self._btn_settings.match_native_size(
             self.titleBar.maxBtn
         )
 
-    # ── 设置弹窗 ─────────────────────────
+    # ── ★ v0.44: Snap Layout（nativeEvent 覆写）──
+    def nativeEvent(self, eventType, message):
+        """拦截 WM_NCHITTEST → maxBtn 返回 HTMAXBUTTON"""
+        if eventType == b"windows_generic_MSG":
+            try:
+                msg = ctypes.wintypes.MSG.from_address(
+                    int(message)
+                )
+                if not msg.hWnd:
+                    return super().nativeEvent(
+                        eventType, message
+                    )
+                # WM_NCHITTEST
+                if msg.message == 0x0084:
+                    if self._isHoverMaxBtn():
+                        self.titleBar.maxBtn.setProperty(
+                            "_custom_hover", True
+                        )
+                        self.titleBar.maxBtn.update()
+                        return True, 9  # HTMAXBUTTON
+                # WM_NCMOUSELEAVE / WM_MOUSELEAVE
+                elif msg.message in (0x02A2, 0x02A3):
+                    self.titleBar.maxBtn.setProperty(
+                        "_custom_hover", False
+                    )
+                    self.titleBar.maxBtn.setProperty(
+                        "_custom_press", False
+                    )
+                    self.titleBar.maxBtn.update()
+                # WM_NCLBUTTONDOWN / WM_NCLBUTTONDBLCLK
+                elif msg.message in (0x00A1, 0x00A3):
+                    if self._isHoverMaxBtn():
+                        QApplication.sendEvent(
+                            self.titleBar.maxBtn,
+                            QMouseEvent(
+                                QEvent.Type.MouseButtonPress,
+                                QPoint(),
+                                Qt.MouseButton.LeftButton,
+                                Qt.MouseButton.LeftButton,
+                                Qt.KeyboardModifier.NoModifier,
+                            ),
+                        )
+                        return True, 0
+                # WM_NCLBUTTONUP / WM_NCRBUTTONUP
+                elif msg.message in (0x00A2, 0x00A5):
+                    if self._isHoverMaxBtn():
+                        QApplication.sendEvent(
+                            self.titleBar.maxBtn,
+                            QMouseEvent(
+                                QEvent.Type.MouseButtonRelease,
+                                QPoint(),
+                                Qt.MouseButton.LeftButton,
+                                Qt.MouseButton.LeftButton,
+                                Qt.KeyboardModifier.NoModifier,
+                            ),
+                        )
+            except Exception:
+                pass
+        return super().nativeEvent(eventType, message)
+
+    def _isHoverMaxBtn(self):
+        pos = (
+            QCursor.pos()
+            - self.geometry().topLeft()
+            - self.titleBar.pos()
+        )
+        return (
+            self.titleBar.childAt(pos)
+            is self.titleBar.maxBtn
+        )
+
     def _open_settings(self):
         tab_names = self._filter_mgr.get_tab_names()
         dlg = SettingsDialog(
@@ -701,7 +753,6 @@ class MainWindow(FramelessMainWindow):
         self._lbl_log_err.show()
         QTimer.singleShot(5000, self._lbl_log_err.hide)
 
-    # ── ★ v0.43: 另存为 ─────────────────
     def _save_as_tab(self, tab_name):
         content = self._filter_mgr.get_tab_content(
             tab_name
@@ -728,7 +779,6 @@ class MainWindow(FramelessMainWindow):
                     self, "保存失败", str(e)
                 )
 
-    # ── 发送区折叠 ─────────────────────
     def _toggle_send_area(self):
         self._send_visible = not self._send_visible
         self._send_area.setVisible(self._send_visible)
@@ -736,7 +786,6 @@ class MainWindow(FramelessMainWindow):
             self._send_visible
         )
 
-    # ── 信号连接 ───────────────────────
     def _wire(self):
         self._serial.data_received.connect(self._on_rx)
         self._serial.error_occurred.connect(self._on_err)
@@ -770,7 +819,6 @@ class MainWindow(FramelessMainWindow):
             self._log_mgr.write_line,
             self._log_mgr.close_tab,
         )
-        # ★ v0.43: 另存为回调
         self._filter_mgr.set_save_as_callback(
             self._save_as_tab
         )
@@ -785,7 +833,6 @@ class MainWindow(FramelessMainWindow):
             self._btn_clear.mapToGlobal(pos)
         )
 
-    # ── 键盘事件过滤 ───────────────────
     def eventFilter(self, obj, event):
         if (
             obj is self._send_edit
@@ -808,7 +855,6 @@ class MainWindow(FramelessMainWindow):
                     return True
         return super().eventFilter(obj, event)
 
-    # ── 串口扫描 ───────────────────────
     def _scan_ports(self):
         if self._connected:
             return
@@ -850,7 +896,6 @@ class MainWindow(FramelessMainWindow):
             parts[1].strip() if len(parts) > 1 else ""
         )
 
-    # ── 连接 / 断开 ────────────────────
     def _toggle_conn(self):
         if self._connected:
             self._do_disconnect()
@@ -883,7 +928,6 @@ class MainWindow(FramelessMainWindow):
         _, msg = self._serial.disconnect()
         self._filter_mgr.append_info(msg)
 
-    # ── 发送 ───────────────────────────
     def _do_send(self):
         if not self._connected:
             return
@@ -919,7 +963,6 @@ class MainWindow(FramelessMainWindow):
                 f"HEX 解析错误: {e}"
             )
 
-    # ── 数据接收 ───────────────────────
     def _on_rx(self, data):
         if self._chk_ts.isChecked():
             try:
@@ -940,7 +983,6 @@ class MainWindow(FramelessMainWindow):
     def _on_err(self, msg):
         self._filter_mgr.append_error(msg)
 
-    # ── 连接状态变化 ───────────────────
     def _on_conn_changed(self, connected):
         self._connected = connected
         if connected:
@@ -991,7 +1033,6 @@ class MainWindow(FramelessMainWindow):
         self._dot.style().unpolish(self._dot)
         self._dot.style().polish(self._dot)
 
-    # ── 波特率 ─────────────────────────
     def _on_baud_changed(self, idx):
         text = self._cb_baud.itemText(idx)
         if text != "自定义...":
@@ -1075,7 +1116,6 @@ class MainWindow(FramelessMainWindow):
         else:
             self._loop_timer.stop()
 
-    # ── 状态栏刷新 ─────────────────────
     def _refresh_stat(self):
         rx = self._serial.rx_bytes
         tx = self._serial.tx_bytes
@@ -1110,7 +1150,6 @@ class MainWindow(FramelessMainWindow):
             return f"{n/1024:.1f} KB"
         return f"{n/1048576:.2f} MB"
 
-    # ── 窗口事件 ───────────────────────
     def closeEvent(self, event):
         self._port_timer.stop()
         self._stat_timer.stop()
