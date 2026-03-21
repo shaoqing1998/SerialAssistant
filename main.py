@@ -750,6 +750,32 @@ class MainWindow(FramelessMainWindow):
         dlg.exec()
         # ★ v0.5: 设置关闭后刷新高亮
         self._filter_mgr.refresh_highlighter(self._cfg)
+        # ★ fix: 设置关闭后同步日志录制状态
+        log_on = self._cfg.get("logging", {}).get(
+            "enabled", False
+        )
+        if (
+            self._connected
+            and log_on
+            and not self._log_mgr.is_recording
+        ):
+            p = self._get_port()
+            desc = self._get_port_description()
+            self._log_mgr.start_session(p, desc)
+            if self._log_mgr.is_recording:
+                self._filter_mgr.append_info(
+                    f"日志录制已开始: "
+                    f"{self._log_mgr.session_dir}"
+                )
+        elif (
+            self._connected
+            and not log_on
+            and self._log_mgr.is_recording
+        ):
+            self._log_mgr.stop_session()
+            self._filter_mgr.append_info(
+                "日志录制已停止"
+            )
 
     def _on_log_error(self, msg):
         self._lbl_log_err.setText(
@@ -1015,6 +1041,11 @@ class MainWindow(FramelessMainWindow):
             )
             desc = self._get_port_description()
             self._log_mgr.start_session(p, desc)
+            if self._log_mgr.is_recording:
+                self._filter_mgr.append_info(
+                    f"日志录制中: "
+                    f"{self._log_mgr.session_dir}"
+                )
         else:
             self._set_dot(False)
             self._btn_conn.setText("连  接")

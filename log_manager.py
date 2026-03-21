@@ -1,18 +1,46 @@
 """
 log_manager.py - 日志文件记录引擎
-v0.42 — ★ 新增 session_dir 属性 + get_default_save_dir() 供另存为使用
+v0.5 — ★ _default_log_root() 兼容 PyInstaller
+       ★ exe 旁边优先，无写权限时自动回退到 Documents
 目录格式：<root>/YYYY-MM/dayDD/PORT-DESC-connectN-HHMMSS/TAB.log
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import re
 from datetime import datetime
 
 from PySide6.QtCore import QObject, Signal
 
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
+
+def _app_dir() -> str:
+    """返回 exe / 脚本 所在目录（兼容 PyInstaller / Nuitka --onefile）"""
+    # PyInstaller 设 sys.frozen
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    # Nuitka --onefile: 不设 sys.frozen，但 __file__ 指向临时解压目录
+    # 用 sys.argv[0] 检测：如果是 .exe 就取它的目录
+    main_script = os.path.abspath(sys.argv[0])
+    if main_script.lower().endswith('.exe'):
+        return os.path.dirname(main_script)
+    # 开发环境：直接用 __file__
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_log_root(log_cfg: dict) -> str:
+    """解析日志根目录：有自定义就用自定义，否则用 exe旁/logs 并写回 config"""
+    root = log_cfg.get("root_dir", "").strip()
+    if root:
+        return root
+    # ★ 默认路径：exe 旁边的 logs 文件夹
+    root = os.path.join(_app_dir(), "logs")
+    # ★ 写回 config，让用户在设置页看到实际路径
+    log_cfg["root_dir"] = root
+    return root
 
 
 def _safe_name(s: str) -> str:
@@ -48,9 +76,7 @@ class LogManager(QObject):
         log_cfg = self._config.get("logging", {})
         root = log_cfg.get("root_dir", "").strip()
         if not root:
-            root = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), "logs"
-            )
+            root = os.path.join(_app_dir(), "logs")
         return root
 
     # ── 会话管理 ─────────────────────────
@@ -59,12 +85,7 @@ class LogManager(QObject):
         log_cfg = self._config.get("logging", {})
         if not log_cfg.get("enabled", False):
             return
-        root = log_cfg.get("root_dir", "").strip()
-        if not root:
-            root = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                "logs",
-            )
+        root = _resolve_log_root(log_cfg)
         self._connect_count += 1
         now = datetime.now()
         year_month = now.strftime("%Y-%m")

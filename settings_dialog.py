@@ -992,7 +992,7 @@ class SettingsDialog(QDialog):
         lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         dir_h.addWidget(lbl)
         self._lbl_dir = QLineEdit()
-        self._lbl_dir.setPlaceholderText("默认：程序目录/logs")
+        self._lbl_dir.setPlaceholderText("默认：应用所在目录/logs")
         self._lbl_dir.setStyleSheet(
             "QLineEdit { font-size: 12px; color: #374151;"
             "  background: #ffffff;"
