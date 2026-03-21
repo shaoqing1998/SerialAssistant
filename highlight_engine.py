@@ -1,6 +1,14 @@
 """
 highlight_engine.py  -  日志高亮引擎
 v0.5 — QSyntaxHighlighter + 200 预制柔色 + 自动对比度
+
+最近更改 (2026-03-21):
+  [1] load_config: builtin_rules 支持 case_sensitive 字段
+      → cs = rc.get("case_sensitive", False); flags = 0 if cs else re.IGNORECASE
+  [2] load_config: user_rules 同样支持 case_sensitive
+      → cs = ur.get("case_sensitive", False); flags = 0 if cs else re.IGNORECASE
+  [3] highlightBlock: 先 setFormat 整块为 self._base_fg 默认色
+  [4] load_config: 读取 default_fg 配置
 """
 from __future__ import annotations
 
@@ -162,7 +170,7 @@ PREVIEW_TEXT = (
     "[14:30:02.123] [RX] received 0x1A2B ok done count=128\n"
     "[14:30:03.456] [WARN] timeout warning at 0xFF00\n"
     "[14:30:05.789] [ERR] fatal error: disable power stop\n"
-    "[14:30:06.100] info: connected started ack permission denied"
+    "[14:30:06.100] info: connected started ack permission"
 )
 
 
@@ -220,9 +228,11 @@ class LogHighlighter(QSyntaxHighlighter):
                 continue
             fg = rc.get("fg", r["fg"])
             bg = rc.get("bg", r.get("bg"))
+            cs = rc.get("case_sensitive", False)
+            flags = 0 if cs else re.IGNORECASE
             try:
                 rx = re.compile(
-                    r["pattern"], re.IGNORECASE
+                    r["pattern"], flags
                 )
                 self._builtin.append(
                     (rx, self._make_fmt(fg, bg))
@@ -242,8 +252,10 @@ class LogHighlighter(QSyntaxHighlighter):
                 kw if ur.get("is_regex")
                 else re.escape(kw)
             )
+            cs = ur.get("case_sensitive", False)
+            flags = 0 if cs else re.IGNORECASE
             try:
-                rx = re.compile(pat, re.IGNORECASE)
+                rx = re.compile(pat, flags)
                 self._user.append(
                     (rx, self._make_fmt(fg, bg))
                 )

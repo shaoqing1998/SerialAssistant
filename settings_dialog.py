@@ -3,6 +3,19 @@ settings_dialog.py - 通用设置弹窗（全屏遮罩 + 居中面板）
 v0.5 — ★ 新增「高亮」设置页（预览行 + 内置规则 + 自定义规则）
        ★ 拖动排序 + Ctrl 多选 + 右键批量修改颜色
        ★ ColorPickerPopup 色板弹窗集成
+
+最近更改 (2026-03-21):
+  [1] _BuiltinRuleRow: 新增 self._cs = QCheckBox("Aa") 区分大小写选项
+      → get_config() 输出 case_sensitive, reset() 重置为 False
+      → override 加载 case_sensitive
+  [2] _CustomRuleRow: 新增 self._cs = QCheckBox("Aa") 区分大小写选项
+      → get_data() 输出 case_sensitive, 构造函数加载 case_sensitive
+  [3] changed Signal 连接统一用 lambda _: self.changed.emit()
+  [4] 默认字体颜色 default_fg 色块按钮 + _build_hl_config 输出 default_fg
+  [5] 双击内置规则名称 → 就地显示正则, 点击任意位置还原
+  [6] _BuiltinRuleRow: 所有规则统一添加背景色按钮（无默认bg用#ffffff）
+  [7] _build_highlight_page: 内置规则上方添加表头行（启用/名称/Aa/字色/背景）
+  [8] QToolTip 浅色样式（白底灰字圆角，替代系统纯黑默认）
 """
 from __future__ import annotations
 
@@ -562,20 +575,35 @@ class _BuiltinRuleRow(QWidget):
         h.addWidget(self._chk)
         self._lbl = QLabel(rule["name"])
         h.addWidget(self._lbl, stretch=1)
+        self._cs = QCheckBox("Aa")
+        self._cs.setToolTip("区分大小写")
+        self._cs.setStyleSheet(
+            "QCheckBox{font-size:11px;"
+            "font-family:Consolas,monospace;"
+            "background:transparent;spacing:3px}"
+            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
+            "QCheckBox::indicator:unchecked{"
+            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
+            "QCheckBox::indicator:checked{"
+            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
+            "QCheckBox::indicator:hover{border-color:#3b82f6}"
+        )
+        self._cs.toggled.connect(lambda _: self.changed.emit())
+        h.addWidget(self._cs)
         self._fg_btn = _ColorBtn(rule["fg"])
+        self._fg_btn.setToolTip("字体颜色")
         self._fg_btn.color_changed.connect(self._on_color)
         h.addWidget(self._fg_btn)
-        if rule.get("bg"):
-            self._bg_btn = _ColorBtn(rule["bg"])
-            self._bg_btn.color_changed.connect(self._on_color)
-            h.addWidget(self._bg_btn)
-        else:
-            self._bg_btn = None
+        self._bg_btn = _ColorBtn(rule.get("bg") or "#ffffff")
+        self._bg_btn.setToolTip("背景色（白色=无背景）")
+        self._bg_btn.color_changed.connect(self._on_color)
+        h.addWidget(self._bg_btn)
         if override:
             self._chk.setChecked(override.get("enabled", True))
+            self._cs.setChecked(override.get("case_sensitive", False))
             if "fg" in override:
                 self._fg_btn.set_color(override["fg"])
-            if "bg" in override and self._bg_btn:
+            if "bg" in override:
                 self._bg_btn.set_color(override["bg"])
         self._style_lbl()
 
@@ -585,8 +613,9 @@ class _BuiltinRuleRow(QWidget):
 
     def _style_lbl(self):
         fg = self._fg_btn.color()
-        bg = self._bg_btn.color() if self._bg_btn else None
-        if bg:
+        bg = self._bg_btn.color()
+        has_bg = bg and bg.lower() != "#ffffff"
+        if has_bg:
             self._lbl.setStyleSheet(
                 f"font-size:12px;color:#1f2937;"
                 f"background:{bg};border-radius:3px;padding:1px 4px;"
@@ -600,18 +629,22 @@ class _BuiltinRuleRow(QWidget):
         return self._id
 
     def get_config(self):
-        d = {"enabled": self._chk.isChecked(), "fg": self._fg_btn.color()}
-        if self._bg_btn:
-            d["bg"] = self._bg_btn.color()
+        bg = self._bg_btn.color()
+        d = {
+            "enabled": self._chk.isChecked(),
+            "case_sensitive": self._cs.isChecked(),
+            "fg": self._fg_btn.color(),
+            "bg": bg if bg.lower() != "#ffffff" else None,
+        }
         return d
 
     def reset(self):
         # ★ bracket 规则默认不勾选，其余默认勾选
         default_on = (self._id != "bracket")
         self._chk.setChecked(default_on)
+        self._cs.setChecked(False)
         self._fg_btn.set_color(self._default_fg)
-        if self._bg_btn and self._default_bg:
-            self._bg_btn.set_color(self._default_bg)
+        self._bg_btn.set_color(self._default_bg or "#ffffff")
         self._style_lbl()
 
     def mouseDoubleClickEvent(self, event):
@@ -702,6 +735,21 @@ class _CustomRuleRow(QFrame):
         )
         self._rx.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._rx)
+        self._cs = QCheckBox("Aa")
+        self._cs.setToolTip("区分大小写")
+        self._cs.setStyleSheet(
+            "QCheckBox{font-size:11px;"
+            "font-family:Consolas,monospace;"
+            "background:transparent;spacing:3px}"
+            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
+            "QCheckBox::indicator:unchecked{"
+            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
+            "QCheckBox::indicator:checked{"
+            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
+            "QCheckBox::indicator:hover{border-color:#3b82f6}"
+        )
+        self._cs.toggled.connect(lambda _: self.changed.emit())
+        h.addWidget(self._cs)
         fg = (data or {}).get("fg", "#374151")
         self._fg = _ColorBtn(fg)
         self._fg.color_changed.connect(self.changed.emit)
@@ -726,6 +774,7 @@ class _CustomRuleRow(QFrame):
             self._chk.setChecked(data.get("enabled", True))
             self._kw.setText(data.get("keyword", ""))
             self._rx.setChecked(data.get("is_regex", False))
+            self._cs.setChecked(data.get("case_sensitive", False))
 
     def eventFilter(self, obj, event):
         if obj is self._grip:
@@ -752,6 +801,7 @@ class _CustomRuleRow(QFrame):
             "enabled": self._chk.isChecked(),
             "keyword": self._kw.text(),
             "is_regex": self._rx.isChecked(),
+            "case_sensitive": self._cs.isChecked(),
             "fg": self._fg.color(),
             "bg": bg if bg.lower() != "#ffffff" else None,
         }
@@ -909,6 +959,12 @@ class SettingsDialog(QDialog):
         )
         self._panel = QWidget(self)
         self._panel.setFixedSize(PANEL_W, PANEL_H)
+        # ★ 浅色 Tooltip 样式（替代系统纯黑默认）
+        self.setStyleSheet(
+            "QToolTip{background:#ffffff;color:#374151;"
+            "border:1px solid #d1d5db;border-radius:4px;"
+            "padding:4px 8px;font-size:12px}"
+        )
         self._record_all = True  # ★ v0.45: 全选状态（新增tab是否自动勾选）
         self._init_panel()
         self._load()
@@ -1286,6 +1342,32 @@ class SettingsDialog(QDialog):
         bi_v = QVBoxLayout(builtin_inner)
         bi_v.setContentsMargins(4, 4, 4, 4)
         bi_v.setSpacing(2)
+
+        # ★ 表头
+        hdr = QWidget()
+        hdr.setFixedHeight(18)
+        hdr_h = QHBoxLayout(hdr)
+        hdr_h.setContentsMargins(6, 0, 6, 0)
+        hdr_h.setSpacing(6)
+        _hdr_ss = "font-size:10px;color:#9ca3af;background:transparent;"
+        hdr_chk = QLabel("")
+        hdr_chk.setFixedWidth(16)
+        hdr_h.addWidget(hdr_chk)
+        hdr_name = QLabel("名称")
+        hdr_name.setStyleSheet(_hdr_ss)
+        hdr_h.addWidget(hdr_name, stretch=1)
+        hdr_cs = QLabel("大小写")
+        hdr_cs.setStyleSheet(_hdr_ss)
+        hdr_h.addWidget(hdr_cs)
+        hdr_fg = QLabel("字色")
+        hdr_fg.setStyleSheet(_hdr_ss)
+        hdr_fg.setFixedWidth(22)
+        hdr_h.addWidget(hdr_fg)
+        hdr_bg = QLabel("背景")
+        hdr_bg.setStyleSheet(_hdr_ss)
+        hdr_bg.setFixedWidth(22)
+        hdr_h.addWidget(hdr_bg)
+        bi_v.addWidget(hdr)
 
         hl_cfg = self._config.get("highlight", {})
         bc = hl_cfg.get("builtin_rules", {})
