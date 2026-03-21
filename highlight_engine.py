@@ -36,7 +36,7 @@ SOFT_PALETTE = _gen_palette()
 
 DEFAULT_12 = [
     "#c0392b", "#e67e22", "#b8860b", "#27864e",
-    "#2a9d8f", "#5b8cc2", "#7c5cbf", "#c2577a",
+    "#8a6cc5", "#5b8cc2", "#7c5cbf", "#c2577a",
     "#8c8c8c", "#3a7ca5", "#6b8e4e", "#9b6b4a",
 ]
 
@@ -82,7 +82,7 @@ def auto_fg(fg: str, bg: str | None) -> str:
 
 
 # ══════════════════════════════════════════
-# 内置规则（8 条，不可改正则，可改颜色和开关）
+# 内置规则（9 条，不可改正则，可改颜色和开关）
 # ══════════════════════════════════════════
 BUILTIN_RULES = [
     {
@@ -93,24 +93,17 @@ BUILTIN_RULES = [
         "bg": None,
     },
     {
-        "id": "bracket",
-        "name": "方括号标签",
-        "pattern": r"\[[A-Za-z_][\w.:/-]*\]",
-        "fg": "#5b8cc2",
-        "bg": None,
-    },
-    {
         "id": "hex_addr",
         "name": "HEX 地址",
         "pattern": r"0x[0-9a-fA-F]+",
-        "fg": "#c47e2a",
+        "fg": "#8a6cc5",
         "bg": None,
     },
     {
         "id": "number",
         "name": "纯数字",
-        "pattern": r"(?<![\.\w])\d+(?![\.\w])",
-        "fg": "#2a9d8f",
+        "pattern": r"(?<![\.\.\w])\d+(?![\.\.\w])",
+        "fg": "#8a6cc5",
         "bg": None,
     },
     {
@@ -141,11 +134,35 @@ BUILTIN_RULES = [
         "fg": "#b05a30",
         "bg": None,
     },
+    {
+        "id": "linux_log",
+        "name": "Linux 常用词",
+        "pattern": (
+            r"\b(?:info|debug|trace|notice"
+            r"|critical|crit|panic|emergency"
+            r"|timeout|refused|rejected|disconnected"
+            r"|connected|started|stopped"
+            r"|loaded|unloaded"
+            r"|denied|permission"
+            r"|ack|nak|nack|reset|reboot|overflow)\b"
+        ),
+        "fg": "#3a8a8a",
+        "bg": None,
+    },
+    {
+        "id": "bracket",
+        "name": "方括号标签",
+        "pattern": r"\[[A-Za-z_][\w.:/-]*\]",
+        "fg": "#5b8cc2",
+        "bg": None,
+    },
 ]
 
 PREVIEW_TEXT = (
-    "[14:30:02.123] [ISP] ISP_ioctl: "
-    "disable CG/MTCMOS 0x18000 ok count=42"
+    "[14:30:02.123] [RX] received 0x1A2B ok done count=128\n"
+    "[14:30:03.456] [WARN] timeout warning at 0xFF00\n"
+    "[14:30:05.789] [ERR] fatal error: disable power stop\n"
+    "[14:30:06.100] info: connected started ack permission denied"
 )
 
 
@@ -158,6 +175,7 @@ class LogHighlighter(QSyntaxHighlighter):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._enabled = True
+        self._base_fg = "#1e293b"
         self._builtin: list[tuple] = []
         self._user: list[tuple] = []
         self._load_defaults()
@@ -193,6 +211,7 @@ class LogHighlighter(QSyntaxHighlighter):
     def load_config(self, config: dict):
         hl = config.get("highlight", {})
         self._enabled = hl.get("enabled", True)
+        self._base_fg = hl.get("default_fg", "#1e293b")
         bc = hl.get("builtin_rules", {})
         self._builtin.clear()
         for r in BUILTIN_RULES:
@@ -238,7 +257,7 @@ class LogHighlighter(QSyntaxHighlighter):
         # ★ 先把整块重置为默认文字色，
         #   覆盖 insertHtml 带进来的 #4ec9b0
         base = QTextCharFormat()
-        base.setForeground(QColor("#1e293b"))
+        base.setForeground(QColor(self._base_fg))
         self.setFormat(0, len(text), base)
         for rx, fmt in self._builtin:
             for m in rx.finditer(text):

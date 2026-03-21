@@ -747,8 +747,14 @@ class MainWindow(FramelessMainWindow):
         dlg = SettingsDialog(
             self._cfg, tab_names, parent=self
         )
+        # ★ v0.5: 实时刷新外部日志区高亮（修改即更新）
+        dlg.highlight_changed.connect(
+            lambda: self._filter_mgr.refresh_highlighter(
+                self._cfg
+            )
+        )
         dlg.exec()
-        # ★ v0.5: 设置关闭后刷新高亮
+        # ★ v0.5: 设置关闭后最终刷新一次
         self._filter_mgr.refresh_highlighter(self._cfg)
         # ★ fix: 设置关闭后同步日志录制状态
         log_on = self._cfg.get("logging", {}).get(

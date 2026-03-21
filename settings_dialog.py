@@ -549,6 +549,8 @@ class _BuiltinRuleRow(QWidget):
         self._id = rule["id"]
         self._default_fg = rule["fg"]
         self._default_bg = rule.get("bg")
+        self._pattern = rule["pattern"]
+        self._showing_pattern = False
         self.setFixedHeight(28)
         h = QHBoxLayout(self)
         h.setContentsMargins(6, 0, 6, 0)
@@ -556,7 +558,7 @@ class _BuiltinRuleRow(QWidget):
         self._chk = QCheckBox()
         self._chk.setStyleSheet(_CHK_SS)
         self._chk.setChecked(True)
-        self._chk.toggled.connect(self.changed.emit)
+        self._chk.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._chk)
         self._lbl = QLabel(rule["name"])
         h.addWidget(self._lbl, stretch=1)
@@ -604,11 +606,45 @@ class _BuiltinRuleRow(QWidget):
         return d
 
     def reset(self):
-        self._chk.setChecked(True)
+        # ★ bracket 规则默认不勾选，其余默认勾选
+        default_on = (self._id != "bracket")
+        self._chk.setChecked(default_on)
         self._fg_btn.set_color(self._default_fg)
         if self._bg_btn and self._default_bg:
             self._bg_btn.set_color(self._default_bg)
         self._style_lbl()
+
+    def mouseDoubleClickEvent(self, event):
+        """双击：名称 ↔ 正则 就地切换，点击任意位置还原"""
+        if self._showing_pattern:
+            return
+        self._showing_pattern = True
+        self._lbl.setText(self._pattern)
+        self._lbl.setStyleSheet(
+            "font-family:Consolas,monospace;"
+            "font-size:11px;color:#6b7280;"
+            "background:#f3f4f6;border-radius:3px;"
+            "padding:1px 4px;"
+        )
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """监听全局点击，还原名称显示"""
+        if (
+            self._showing_pattern
+            and event.type() == QEvent.Type.MouseButtonPress
+        ):
+            self._showing_pattern = False
+            QApplication.instance().removeEventFilter(self)
+            self._lbl.setText(
+                next(
+                    r["name"]
+                    for r in BUILTIN_RULES
+                    if r["id"] == self._id
+                )
+            )
+            self._style_lbl()
+        return super().eventFilter(obj, event)
 
 
 # ═══════════════════════════════════════════
@@ -638,7 +674,7 @@ class _CustomRuleRow(QFrame):
         self._chk = QCheckBox()
         self._chk.setStyleSheet(_CHK_SS)
         self._chk.setChecked(True)
-        self._chk.toggled.connect(self.changed.emit)
+        self._chk.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._chk)
         self._kw = QLineEdit()
         self._kw.setPlaceholderText("关键词 / 正则")
@@ -649,7 +685,7 @@ class _CustomRuleRow(QFrame):
             "border-radius:4px;padding:0 4px}"
             "QLineEdit:focus{border-color:#3b82f6}"
         )
-        self._kw.textChanged.connect(self.changed.emit)
+        self._kw.textChanged.connect(lambda _: self.changed.emit())
         h.addWidget(self._kw, stretch=1)
         self._rx = QCheckBox(".*")
         self._rx.setToolTip("正则匹配")
@@ -664,7 +700,7 @@ class _CustomRuleRow(QFrame):
             "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
             "QCheckBox::indicator:hover{border-color:#3b82f6}"
         )
-        self._rx.toggled.connect(self.changed.emit)
+        self._rx.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._rx)
         fg = (data or {}).get("fg", "#374151")
         self._fg = _ColorBtn(fg)
@@ -992,7 +1028,7 @@ class SettingsDialog(QDialog):
         lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         dir_h.addWidget(lbl)
         self._lbl_dir = QLineEdit()
-        self._lbl_dir.setPlaceholderText("默认：应用所在目录/logs")
+        self._lbl_dir.setPlaceholderText("默认：程序目录/logs")
         self._lbl_dir.setStyleSheet(
             "QLineEdit { font-size: 12px; color: #374151;"
             "  background: #ffffff;"
@@ -1193,21 +1229,50 @@ class SettingsDialog(QDialog):
         body_v.setContentsMargins(0, 0, 0, 0)
         body_v.setSpacing(6)
 
-        # ★ 预览行
+        # ★ 预览区（可编辑，样式与日志窗一致）
         self._hl_preview = QTextEdit()
-        self._hl_preview.setReadOnly(True)
-        self._hl_preview.setFixedHeight(36)
+        self._hl_preview.setFixedHeight(70)
         self._hl_preview.setPlainText(PREVIEW_TEXT)
+        self._hl_preview.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._hl_preview.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self._hl_preview.setStyleSheet(
-            "QTextEdit{background:#1e1e2e;color:#cdd6f4;"
-            "border:1px solid #45475a;border-radius:4px;"
+            "QTextEdit{background:#ffffff;color:#1e293b;"
+            "border:1px solid #e5e7eb;border-radius:4px;"
             "font-family:Consolas,monospace;font-size:12px;"
             "padding:2px 4px}"
+            "QScrollBar:vertical{width:4px;background:transparent}"
+            "QScrollBar::handle:vertical{background:#d1d5db;"
+            "border-radius:2px}"
+            "QScrollBar::add-line,QScrollBar::sub-line{"
+            "width:0;height:0}"
         )
         self._preview_hl = LogHighlighter(
             self._hl_preview.document()
         )
         body_v.addWidget(self._hl_preview)
+
+        # ★ 默认字体颜色
+        dfg_h = QHBoxLayout()
+        dfg_h.setSpacing(6)
+        lbl_dfg = QLabel("默认字体颜色")
+        lbl_dfg.setStyleSheet(
+            "font-size:12px;color:#6b7280;"
+            "background:transparent;"
+        )
+        dfg_h.addWidget(lbl_dfg)
+        _hl_cfg = self._config.get("highlight", {})
+        _dfg_c = _hl_cfg.get("default_fg", "#1e293b")
+        self._default_fg_btn = _ColorBtn(_dfg_c)
+        self._default_fg_btn.color_changed.connect(
+            self._on_hl_changed
+        )
+        dfg_h.addWidget(self._default_fg_btn)
+        dfg_h.addStretch(1)
+        body_v.addLayout(dfg_h)
 
         # ★ 内置规则
         lbl_b = QLabel("内置规则")
@@ -1304,6 +1369,7 @@ class SettingsDialog(QDialog):
     def _on_hl_changed(self):
         self._refresh_preview()
         self._auto_save()
+        self.highlight_changed.emit()
 
     def _refresh_preview(self):
         cfg = self._build_hl_config()
@@ -1314,6 +1380,7 @@ class SettingsDialog(QDialog):
     def _build_hl_config(self):
         cfg = {
             "enabled": self._chk_hl_enabled.isChecked(),
+            "default_fg": self._default_fg_btn.color(),
             "builtin_rules": {},
             "user_rules": [],
         }
@@ -1404,6 +1471,7 @@ class SettingsDialog(QDialog):
         elif idx == 1:
             # ★ 高亮页重置
             self._chk_hl_enabled.setChecked(True)
+            self._default_fg_btn.set_color("#1e293b")
             for row in self._builtin_rows:
                 row.reset()
             self._custom_list.clear_all()

@@ -1,21 +1,12 @@
 """
 config.py - 配置文件加载/保存模块
-v0.5 — ★ _app_dir() 兼容 PyInstaller --onefile/--onedir
-       ★ 新增 highlight 配置节
+新增 logging 配置节
 """
 import json
 import os
-import sys
-
-
-def _app_dir() -> str:
-    """exe 所在目录（兼容 PyInstaller --onefile / --onedir）"""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
-
-
-_CONFIG_PATH = os.path.join(_app_dir(), "config.json")
+_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "config.json"
+)
 _DEFAULT_CONFIG = {
     "serial": {
         "port": "",
@@ -45,12 +36,7 @@ _DEFAULT_CONFIG = {
         "record_all_tabs": True,
         "selected_tabs": [],
     },
-    # ★ v0.5: 高亮配置
-    "highlight": {
-        "enabled": True,
-        "builtin_rules": {},
-        "user_rules": [],
-    },
+    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": False}}, "user_rules": []}
 }
 def load_config() -> dict:
     """加载配置文件，若不存在则返回默认配置"""
