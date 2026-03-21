@@ -1,8 +1,9 @@
 """
-main.py - 串口调试助手 v0.44
+main.py - 串口调试助手 v0.5
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
 ★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
 ★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
+★ v0.5: 设置变更 → 刷新高亮
 """
 import sys
 import os
@@ -370,11 +371,13 @@ class MainWindow(FramelessMainWindow):
         self._stat_timer.start(1000)
         self._scan_ports()
         self._wire()
+        # ★ v0.5: 初始加载高亮配置
+        self._filter_mgr.refresh_highlighter(self._cfg)
         self._center_on_screen()
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.44")
+        self.setWindowTitle("串口调试助手  v0.5")
         tb = self.titleBar
         tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)
@@ -745,6 +748,8 @@ class MainWindow(FramelessMainWindow):
             self._cfg, tab_names, parent=self
         )
         dlg.exec()
+        # ★ v0.5: 设置关闭后刷新高亮
+        self._filter_mgr.refresh_highlighter(self._cfg)
 
     def _on_log_error(self, msg):
         self._lbl_log_err.setText(

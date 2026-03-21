@@ -1,8 +1,8 @@
 """
 settings_dialog.py - 通用设置弹窗（全屏遮罩 + 居中面板）
-v0.45 — ★ 重置按钮无边框设计（hover/pressed 仅背景色）
-        ★ 关闭按钮垂直居中修复
-        ★ 关闭按钮与主窗口一致 + 标题栏左侧齿轮图标
+v0.5 — ★ 新增「高亮」设置页（预览行 + 内置规则 + 自定义规则）
+       ★ 拖动排序 + Ctrl 多选 + 右键批量修改颜色
+       ★ ColorPickerPopup 色板弹窗集成
 """
 from __future__ import annotations
 
@@ -10,15 +10,23 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QCheckBox, QPushButton, QFileDialog, QWidget,
     QRadioButton, QScrollArea, QFrame, QStackedWidget,
-    QButtonGroup, QLineEdit,
+    QButtonGroup, QLineEdit, QTextEdit, QMenu,
+    QApplication,
 )
-from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal
+from PySide6.QtCore import (
+    Qt, QPoint, QPointF, QRectF, Signal, QEvent,
+)
 from PySide6.QtGui import (
-    QPainter, QPainterPath, QColor, QPen, QMouseEvent, QRegion,
-    QPixmap,
+    QPainter, QPainterPath, QColor, QPen,
+    QRegion, QPixmap, QCursor,
 )
 from PySide6.QtSvg import QSvgRenderer
 from config import save_config
+from highlight_engine import (
+    BUILTIN_RULES, PREVIEW_TEXT, LogHighlighter,
+    auto_fg, lum,
+)
+from color_picker import ColorPickerPopup
 
 PANEL_W = 520
 PANEL_H = 480
@@ -475,9 +483,382 @@ class _GearIconLabel(QLabel):
 
 
 # ═══════════════════════════════════════════
+# ★ v0.5 新增：色块按钮（用于规则行的颜色选择）
+# ═══════════════════════════════════════════
+class _ColorBtn(QWidget):
+    color_changed = Signal(str)
+
+    def __init__(self, color="#cccccc", parent=None):
+        super().__init__(parent)
+        self._color = color
+        self._hovered = False
+        self.setFixedSize(22, 16)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
+
+    def color(self):
+        return self._color
+
+    def set_color(self, c):
+        self._color = c
+        self.update()
+
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            dlg = ColorPickerPopup(self._color, self.window())
+            dlg.color_chosen.connect(self._on_pick)
+            pos = self.mapToGlobal(QPoint(0, self.height() + 2))
+            dlg.move(pos)
+            dlg.exec()
+
+    def _on_pick(self, c):
+        self._color = c
+        self.update()
+        self.color_changed.emit(c)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        path = QPainterPath()
+        path.addRoundedRect(r, 3, 3)
+        p.fillPath(path, QColor(self._color))
+        pen_c = "#9ca3af" if self._hovered else "#d1d5db"
+        p.setPen(QPen(QColor(pen_c), 1.0))
+        p.drawRoundedRect(r, 3, 3)
+        p.end()
+
+
+# ═══════════════════════════════════════════
+# ★ v0.5 新增：内置规则行
+# ═══════════════════════════════════════════
+class _BuiltinRuleRow(QWidget):
+    changed = Signal()
+
+    def __init__(self, rule, override=None, parent=None):
+        super().__init__(parent)
+        self._id = rule["id"]
+        self._default_fg = rule["fg"]
+        self._default_bg = rule.get("bg")
+        self.setFixedHeight(28)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(6, 0, 6, 0)
+        h.setSpacing(6)
+        self._chk = QCheckBox()
+        self._chk.setStyleSheet(_CHK_SS)
+        self._chk.setChecked(True)
+        self._chk.toggled.connect(self.changed.emit)
+        h.addWidget(self._chk)
+        self._lbl = QLabel(rule["name"])
+        h.addWidget(self._lbl, stretch=1)
+        self._fg_btn = _ColorBtn(rule["fg"])
+        self._fg_btn.color_changed.connect(self._on_color)
+        h.addWidget(self._fg_btn)
+        if rule.get("bg"):
+            self._bg_btn = _ColorBtn(rule["bg"])
+            self._bg_btn.color_changed.connect(self._on_color)
+            h.addWidget(self._bg_btn)
+        else:
+            self._bg_btn = None
+        if override:
+            self._chk.setChecked(override.get("enabled", True))
+            if "fg" in override:
+                self._fg_btn.set_color(override["fg"])
+            if "bg" in override and self._bg_btn:
+                self._bg_btn.set_color(override["bg"])
+        self._style_lbl()
+
+    def _on_color(self, _=""):
+        self._style_lbl()
+        self.changed.emit()
+
+    def _style_lbl(self):
+        fg = self._fg_btn.color()
+        bg = self._bg_btn.color() if self._bg_btn else None
+        if bg:
+            self._lbl.setStyleSheet(
+                f"font-size:12px;color:#1f2937;"
+                f"background:{bg};border-radius:3px;padding:1px 4px;"
+            )
+        else:
+            self._lbl.setStyleSheet(
+                f"font-size:12px;color:{fg};background:transparent;"
+            )
+
+    def rule_id(self):
+        return self._id
+
+    def get_config(self):
+        d = {"enabled": self._chk.isChecked(), "fg": self._fg_btn.color()}
+        if self._bg_btn:
+            d["bg"] = self._bg_btn.color()
+        return d
+
+    def reset(self):
+        self._chk.setChecked(True)
+        self._fg_btn.set_color(self._default_fg)
+        if self._bg_btn and self._default_bg:
+            self._bg_btn.set_color(self._default_bg)
+        self._style_lbl()
+
+
+# ═══════════════════════════════════════════
+# ★ v0.5 新增：自定义规则行
+# ═══════════════════════════════════════════
+class _CustomRuleRow(QFrame):
+    changed = Signal()
+    delete_me = Signal(object)
+    grip_pressed = Signal(object)
+
+    def __init__(self, data=None, parent=None):
+        super().__init__(parent)
+        self._selected = False
+        self.setFixedHeight(30)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(2, 0, 4, 0)
+        h.setSpacing(4)
+        self._grip = QLabel("\u283f")
+        self._grip.setFixedWidth(12)
+        self._grip.setStyleSheet(
+            "color:#c0c0c0;font-size:14px;background:transparent;"
+        )
+        self._grip.setCursor(Qt.CursorShape.SizeAllCursor)
+        self._grip.installEventFilter(self)
+        h.addWidget(self._grip)
+        self._chk = QCheckBox()
+        self._chk.setStyleSheet(_CHK_SS)
+        self._chk.setChecked(True)
+        self._chk.toggled.connect(self.changed.emit)
+        h.addWidget(self._chk)
+        self._kw = QLineEdit()
+        self._kw.setPlaceholderText("关键词 / 正则")
+        self._kw.setFixedHeight(22)
+        self._kw.setStyleSheet(
+            "QLineEdit{font-size:12px;color:#374151;"
+            "background:#fff;border:1px solid #d1d5db;"
+            "border-radius:4px;padding:0 4px}"
+            "QLineEdit:focus{border-color:#3b82f6}"
+        )
+        self._kw.textChanged.connect(self.changed.emit)
+        h.addWidget(self._kw, stretch=1)
+        self._rx = QCheckBox(".*")
+        self._rx.setToolTip("正则匹配")
+        self._rx.setStyleSheet(
+            "QCheckBox{font-size:11px;"
+            "font-family:Consolas,monospace;"
+            "background:transparent;spacing:3px}"
+            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
+            "QCheckBox::indicator:unchecked{"
+            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
+            "QCheckBox::indicator:checked{"
+            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
+            "QCheckBox::indicator:hover{border-color:#3b82f6}"
+        )
+        self._rx.toggled.connect(self.changed.emit)
+        h.addWidget(self._rx)
+        fg = (data or {}).get("fg", "#374151")
+        self._fg = _ColorBtn(fg)
+        self._fg.color_changed.connect(self.changed.emit)
+        h.addWidget(self._fg)
+        bg = (data or {}).get("bg") or "#ffffff"
+        self._bg = _ColorBtn(bg)
+        self._bg.setToolTip("背景色（白=无）")
+        self._bg.color_changed.connect(self.changed.emit)
+        h.addWidget(self._bg)
+        d = QPushButton("\u00d7")
+        d.setFixedSize(16, 16)
+        d.setStyleSheet(
+            "QPushButton{background:transparent;border:none;"
+            "border-radius:3px;color:#d1d5db;"
+            "font-size:12px;font-weight:700;"
+            "min-width:0;min-height:0}"
+            "QPushButton:hover{background:#fee2e2;color:#dc2626}"
+        )
+        d.clicked.connect(lambda: self.delete_me.emit(self))
+        h.addWidget(d)
+        if data:
+            self._chk.setChecked(data.get("enabled", True))
+            self._kw.setText(data.get("keyword", ""))
+            self._rx.setChecked(data.get("is_regex", False))
+
+    def eventFilter(self, obj, event):
+        if obj is self._grip:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    mods = QApplication.keyboardModifiers()
+                    if mods & Qt.KeyboardModifier.ControlModifier:
+                        self.set_selected(not self._selected)
+                    else:
+                        self.grip_pressed.emit(self)
+                    return True
+        return super().eventFilter(obj, event)
+
+    def set_selected(self, s):
+        self._selected = s
+        self.update()
+
+    def is_selected(self):
+        return self._selected
+
+    def get_data(self):
+        bg = self._bg.color()
+        return {
+            "enabled": self._chk.isChecked(),
+            "keyword": self._kw.text(),
+            "is_regex": self._rx.isChecked(),
+            "fg": self._fg.color(),
+            "bg": bg if bg.lower() != "#ffffff" else None,
+        }
+
+    def set_fg(self, c):
+        self._fg.set_color(c)
+
+    def set_bg(self, c):
+        self._bg.set_color(c)
+
+    def paintEvent(self, event):
+        if self._selected:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(self.rect()), 4, 4)
+            p.fillPath(path, QColor("#eff6ff"))
+            p.end()
+        super().paintEvent(event)
+
+
+# ═══════════════════════════════════════════
+# ★ v0.5 新增：自定义规则列表（拖动排序 + 多选 + 右键批量）
+# ═══════════════════════════════════════════
+class _CustomRuleList(QWidget):
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows: list[_CustomRuleRow] = []
+        self._drag_row = None
+        self._v = QVBoxLayout(self)
+        self._v.setContentsMargins(4, 4, 4, 4)
+        self._v.setSpacing(2)
+        self._v.addStretch(1)
+        self.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.customContextMenuRequested.connect(self._ctx)
+
+    def add_rule(self, data=None):
+        if len(self._rows) >= 200:
+            return
+        row = _CustomRuleRow(data)
+        row.changed.connect(self.changed.emit)
+        row.delete_me.connect(self._del)
+        row.grip_pressed.connect(self._start_drag)
+        self._v.insertWidget(self._v.count() - 1, row)
+        self._rows.append(row)
+        self.changed.emit()
+
+    def _del(self, row):
+        if row in self._rows:
+            self._rows.remove(row)
+            self._v.removeWidget(row)
+            row.deleteLater()
+            self.changed.emit()
+
+    def _start_drag(self, row):
+        self._drag_row = row
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if self._drag_row is None:
+            return False
+        if event.type() == QEvent.Type.MouseMove:
+            local = self.mapFromGlobal(QCursor.pos())
+            self._move(local.y())
+            return True
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            self._end_drag()
+            return True
+        return False
+
+    def _move(self, y):
+        di = self._rows.index(self._drag_row)
+        for i, r in enumerate(self._rows):
+            if r is self._drag_row:
+                continue
+            mid = r.geometry().y() + r.height() // 2
+            if (i < di and y < mid) or (i > di and y > mid):
+                self._rows.pop(di)
+                self._rows.insert(i, self._drag_row)
+                for rr in self._rows:
+                    self._v.removeWidget(rr)
+                for idx, rr in enumerate(self._rows):
+                    self._v.insertWidget(idx, rr)
+                return
+
+    def _end_drag(self):
+        self._drag_row = None
+        QApplication.instance().removeEventFilter(self)
+        self.changed.emit()
+
+    def _ctx(self, pos):
+        sel = [r for r in self._rows if r.is_selected()]
+        if not sel:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu{background:#fff;border:1px solid #d1d5db;"
+            "border-radius:6px;padding:4px}"
+            "QMenu::item{padding:4px 16px;font-size:12px;"
+            "border-radius:4px}"
+            "QMenu::item:selected{background:#eff6ff;color:#2563eb}"
+        )
+        a_fg = menu.addAction(f"修改字体颜色（{len(sel)}条）")
+        a_bg = menu.addAction(f"修改背景颜色（{len(sel)}条）")
+        act = menu.exec(self.mapToGlobal(pos))
+        if act == a_fg:
+            dlg = ColorPickerPopup(
+                sel[0].get_data()["fg"], self.window()
+            )
+            if dlg.exec():
+                for r in sel:
+                    r.set_fg(dlg.get_color())
+                self.changed.emit()
+        elif act == a_bg:
+            bg0 = sel[0].get_data().get("bg") or "#ffffff"
+            dlg = ColorPickerPopup(bg0, self.window())
+            if dlg.exec():
+                for r in sel:
+                    r.set_bg(dlg.get_color())
+                self.changed.emit()
+
+    def get_all(self):
+        return [r.get_data() for r in self._rows]
+
+    def clear_all(self):
+        for r in list(self._rows):
+            self._del(r)
+
+    def clear_selection(self):
+        for r in self._rows:
+            r.set_selected(False)
+
+
+# ═══════════════════════════════════════════
 # 主设置弹窗（全屏遮罩模式）
 # ═══════════════════════════════════════════
 class SettingsDialog(QDialog):
+    highlight_changed = Signal()
+
     def __init__(self, config, tab_names, parent=None):
         super().__init__(parent)
         self._config = config
@@ -497,6 +878,8 @@ class SettingsDialog(QDialog):
         self._load()
         self._connect_auto_save()
         self._on_enabled_toggled(self._chk_enabled.isChecked())
+        self._on_hl_enabled(self._chk_hl_enabled.isChecked())
+        self._refresh_preview()
 
     def _init_panel(self):
         root = QVBoxLayout(self._panel)
@@ -555,11 +938,15 @@ class SettingsDialog(QDialog):
         btn_log.setChecked(True)
         self._nav_group.addButton(btn_log, 0)
         nav_v.addWidget(btn_log)
+        btn_hl = _NavBtn("高亮")
+        self._nav_group.addButton(btn_hl, 1)
+        nav_v.addWidget(btn_hl)
         nav_v.addStretch(1)
         body_h.addWidget(nav_w)
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_log_page())
+        self._stack.addWidget(self._build_highlight_page())
         body_h.addWidget(self._stack, stretch=1)
         self._nav_group.idClicked.connect(
             self._stack.setCurrentIndex
@@ -786,6 +1173,159 @@ class SettingsDialog(QDialog):
             self._lbl_dir.setCursorPosition(0)
             self._auto_save()
 
+    def _build_highlight_page(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+
+        # ★ 启用高亮
+        self._chk_hl_enabled = QCheckBox("启用关键词高亮")
+        self._chk_hl_enabled.setStyleSheet(_CHK_SS)
+        self._chk_hl_enabled.setChecked(True)
+        self._chk_hl_enabled.toggled.connect(
+            self._on_hl_enabled
+        )
+        v.addWidget(self._chk_hl_enabled)
+
+        self._hl_body = QWidget()
+        body_v = QVBoxLayout(self._hl_body)
+        body_v.setContentsMargins(0, 0, 0, 0)
+        body_v.setSpacing(6)
+
+        # ★ 预览行
+        self._hl_preview = QTextEdit()
+        self._hl_preview.setReadOnly(True)
+        self._hl_preview.setFixedHeight(36)
+        self._hl_preview.setPlainText(PREVIEW_TEXT)
+        self._hl_preview.setStyleSheet(
+            "QTextEdit{background:#1e1e2e;color:#cdd6f4;"
+            "border:1px solid #45475a;border-radius:4px;"
+            "font-family:Consolas,monospace;font-size:12px;"
+            "padding:2px 4px}"
+        )
+        self._preview_hl = LogHighlighter(
+            self._hl_preview.document()
+        )
+        body_v.addWidget(self._hl_preview)
+
+        # ★ 内置规则
+        lbl_b = QLabel("内置规则")
+        lbl_b.setStyleSheet(
+            "font-size:12px;color:#6b7280;"
+            "background:transparent;"
+        )
+        body_v.addWidget(lbl_b)
+
+        builtin_inner = QWidget()
+        bi_v = QVBoxLayout(builtin_inner)
+        bi_v.setContentsMargins(4, 4, 4, 4)
+        bi_v.setSpacing(2)
+
+        hl_cfg = self._config.get("highlight", {})
+        bc = hl_cfg.get("builtin_rules", {})
+        self._builtin_rows = []
+        for rule in BUILTIN_RULES:
+            ov = bc.get(rule["id"])
+            row = _BuiltinRuleRow(rule, override=ov)
+            row.changed.connect(self._on_hl_changed)
+            bi_v.addWidget(row)
+            self._builtin_rows.append(row)
+        bi_v.addStretch(1)
+
+        bi_scroll = QScrollArea()
+        bi_scroll.setWidget(builtin_inner)
+        bi_scroll.setWidgetResizable(True)
+        bi_scroll.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+        builtin_inner.setStyleSheet(
+            "background:transparent;"
+        )
+        bi_container = _RoundedScrollContainer(
+            bi_scroll
+        )
+        bi_container.setMaximumHeight(130)
+        body_v.addWidget(bi_container)
+
+        # ★ 自定义规则
+        lbl_c = QLabel("自定义规则")
+        lbl_c.setStyleSheet(
+            "font-size:12px;color:#6b7280;"
+            "background:transparent;"
+        )
+        body_v.addWidget(lbl_c)
+
+        self._custom_list = _CustomRuleList()
+        self._custom_list.changed.connect(
+            self._on_hl_changed
+        )
+
+        cu_scroll = QScrollArea()
+        cu_scroll.setWidget(self._custom_list)
+        cu_scroll.setWidgetResizable(True)
+        cu_scroll.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+        self._custom_list.setStyleSheet(
+            "background:transparent;"
+        )
+        cu_container = _RoundedScrollContainer(
+            cu_scroll
+        )
+        cu_container.setMaximumHeight(100)
+        body_v.addWidget(cu_container)
+
+        # ★ 添加按钮
+        btn_add = QPushButton("+ 添加")
+        btn_add.setFixedHeight(26)
+        btn_add.setStyleSheet(
+            "QPushButton{background:transparent;"
+            "border:1px dashed #d1d5db;"
+            "border-radius:4px;color:#6b7280;"
+            "font-size:12px;min-height:0;min-width:0}"
+            "QPushButton:hover{background:#f9fafb;"
+            "border-color:#9ca3af;color:#374151}"
+        )
+        btn_add.clicked.connect(self._add_user_rule)
+        body_v.addWidget(btn_add)
+        body_v.addStretch(1)
+
+        v.addWidget(self._hl_body)
+        return page
+
+    def _on_hl_enabled(self, checked):
+        self._hl_body.setEnabled(checked)
+        self._on_hl_changed()
+
+    def _add_user_rule(self):
+        self._custom_list.add_rule()
+
+    def _on_hl_changed(self):
+        self._refresh_preview()
+        self._auto_save()
+
+    def _refresh_preview(self):
+        cfg = self._build_hl_config()
+        self._preview_hl.load_config(
+            {"highlight": cfg}
+        )
+
+    def _build_hl_config(self):
+        cfg = {
+            "enabled": self._chk_hl_enabled.isChecked(),
+            "builtin_rules": {},
+            "user_rules": [],
+        }
+        for row in self._builtin_rows:
+            cfg["builtin_rules"][row.rule_id()] = (
+                row.get_config()
+            )
+        cfg["user_rules"] = (
+            self._custom_list.get_all()
+        )
+        return cfg
+
     def _load(self):
         log_cfg = self._config.get("logging", {})
         self._chk_enabled.setChecked(
@@ -814,6 +1354,13 @@ class SettingsDialog(QDialog):
                 chk.blockSignals(True)
                 chk.setChecked(chk.text() in selected)
                 chk.blockSignals(False)
+        # ★ v0.5: 加载高亮配置
+        hl_cfg = self._config.get("highlight", {})
+        self._chk_hl_enabled.setChecked(
+            hl_cfg.get("enabled", True)
+        )
+        for ur in hl_cfg.get("user_rules", []):
+            self._custom_list.add_rule(ur)
 
     def _write_to_config(self):
         if "logging" not in self._config:
@@ -833,18 +1380,31 @@ class SettingsDialog(QDialog):
             for chk in self._tab_checks
             if chk.isChecked()
         ]
+        self._config["highlight"] = (
+            self._build_hl_config()
+        )
 
     def _reset(self):
-        self._config["logging"] = {
-            "enabled": False,
-            "root_dir": "",
-            "file_format": ".log",
-            "record_all_tabs": True,
-            "selected_tabs": [],
-        }
-        save_config(self._config)
-        self._record_all = True
-        self._chk_enabled.setChecked(False)
-        self._lbl_dir.setText("")
-        self._radio_log.setChecked(True)
-        self._chk_select_all.setChecked(True)  # 触发 _toggle_select_all → 全部勾选
+        idx = self._stack.currentIndex()
+        if idx == 0:
+            # ★ 日志页重置
+            self._config["logging"] = {
+                "enabled": False,
+                "root_dir": "",
+                "file_format": ".log",
+                "record_all_tabs": True,
+                "selected_tabs": [],
+            }
+            save_config(self._config)
+            self._record_all = True
+            self._chk_enabled.setChecked(False)
+            self._lbl_dir.setText("")
+            self._radio_log.setChecked(True)
+            self._chk_select_all.setChecked(True)
+        elif idx == 1:
+            # ★ 高亮页重置
+            self._chk_hl_enabled.setChecked(True)
+            for row in self._builtin_rows:
+                row.reset()
+            self._custom_list.clear_all()
+            self._on_hl_changed()

@@ -1,8 +1,7 @@
 """
 filter_manager.py - 多 Tab 关键词过滤管理模块
-v0.43 — ★ 右键菜单字号整体缩小 1（14→13px）
-★ Tab 右键新增「另存为…」功能
-★ main tab 也支持右键菜单（仅另存为）
+v0.5 — ★ FilteredLogView 绑定 LogHighlighter 高亮引擎
+★ FilterManager.refresh_highlighter 刷新所有 Tab 高亮
 """
 from __future__ import annotations
 from typing import Callable
@@ -21,6 +20,7 @@ from rounded_menu import (
     RoundedMenu, RoundedContextTextEdit,
     RoundedContextLineEdit,
 )
+from highlight_engine import LogHighlighter
 
 
 # ════════════════════════════════════════════
@@ -48,6 +48,7 @@ class FilteredLogView(RoundedContextTextEdit):
             "border-radius: 6px; background: #ffffff; "
             "color: #1e293b; padding: 2px; }"
         )
+        self._highlighter = None  # ★ v0.5
 
     def set_auto_scroll(self, v):
         self._auto_scroll = v
@@ -99,6 +100,17 @@ class FilteredLogView(RoundedContextTextEdit):
             chunk = data[i:i + 16]
             lines.append(" ".join(f"{b:02X}" for b in chunk))
         return "\n".join(lines) + "\n"
+
+
+    # ★ v0.5 新增：高亮器绑定
+    def set_highlighter(self, config: dict | None):
+        """绑定/更新 LogHighlighter 到本视图的 document"""
+        if not hasattr(self, '_highlighter') or self._highlighter is None:
+            self._highlighter = LogHighlighter(self.document())
+        if config:
+            self._highlighter.load_config(config)
+        else:
+            self._highlighter.set_enabled(False)
 
 
 # ════════════════════════════════════════════
@@ -499,8 +511,16 @@ class FilterManager(QWidget):
             if isinstance(w, FilteredLogView):
                 w.set_auto_scroll(v)
 
-    def set_show_hex(self, v):
-        self._show_hex = v
+    def set_show_hex(self, show):
+        self._show_hex = show
+
+    # ★ v0.5 新增：刷新所有 Tab 的高亮器
+    def refresh_highlighter(self, config: dict):
+        """将高亮配置应用到所有 FilteredLogView Tab"""
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                v.set_highlighter(config)
 
     # ── 核心分发 ──────────────────────────
 
