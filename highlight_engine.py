@@ -235,6 +235,11 @@ class LogHighlighter(QSyntaxHighlighter):
     def highlightBlock(self, text: str):
         if not self._enabled:
             return
+        # ★ 先把整块重置为默认文字色，
+        #   覆盖 insertHtml 带进来的 #4ec9b0
+        base = QTextCharFormat()
+        base.setForeground(QColor("#1e293b"))
+        self.setFormat(0, len(text), base)
         for rx, fmt in self._builtin:
             for m in rx.finditer(text):
                 self.setFormat(
