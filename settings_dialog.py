@@ -604,7 +604,7 @@ class _BuiltinRuleRow(QWidget):
             if "fg" in override:
                 self._fg_btn.set_color(override["fg"])
             if "bg" in override:
-                self._bg_btn.set_color(override["bg"])
+                self._bg_btn.set_color(override["bg"] or "#ffffff")
         self._style_lbl()
 
     def _on_color(self, _=""):
@@ -629,7 +629,7 @@ class _BuiltinRuleRow(QWidget):
         return self._id
 
     def get_config(self):
-        bg = self._bg_btn.color()
+        bg = self._bg_btn.color() or "#ffffff"
         d = {
             "enabled": self._chk.isChecked(),
             "case_sensitive": self._cs.isChecked(),
