@@ -9,6 +9,7 @@ v0.5 — QSyntaxHighlighter + 200 预制柔色 + 自动对比度
       → cs = ur.get("case_sensitive", False); flags = 0 if cs else re.IGNORECASE
   [3] highlightBlock: 先 setFormat 整块为 self._base_fg 默认色
   [4] load_config: 读取 default_fg 配置
+  [5] load_config: 关键词模式支持空格分隔多词（split → join "|"）
 """
 from __future__ import annotations
 
@@ -170,7 +171,7 @@ PREVIEW_TEXT = (
     "[14:30:02.123] [RX] received 0x1A2B ok done count=128\n"
     "[14:30:03.456] [WARN] timeout warning at 0xFF00\n"
     "[14:30:05.789] [ERR] fatal error: disable power stop\n"
-    "[14:30:06.100] info: connected started ack permission"
+    "[14:30:06.100] info: connected started ack permission denied"
 )
 
 
@@ -248,10 +249,14 @@ class LogHighlighter(QSyntaxHighlighter):
                 continue
             fg = ur.get("fg", "#374151")
             bg = ur.get("bg")
-            pat = (
-                kw if ur.get("is_regex")
-                else re.escape(kw)
-            )
+            if ur.get("is_regex"):
+                pat = kw
+            else:
+                words = kw.split()
+                if len(words) > 1:
+                    pat = "|".join(re.escape(w) for w in words)
+                else:
+                    pat = re.escape(kw)
             cs = ur.get("case_sensitive", False)
             flags = 0 if cs else re.IGNORECASE
             try:
