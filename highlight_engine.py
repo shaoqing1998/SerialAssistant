@@ -44,9 +44,9 @@ def _gen_palette(n=200):
 SOFT_PALETTE = _gen_palette()
 
 DEFAULT_12 = [
-    "#c0392b", "#e67e22", "#b8860b", "#27864e",
-    "#8a6cc5", "#5b8cc2", "#7c5cbf", "#c2577a",
-    "#8c8c8c", "#3a7ca5", "#6b8e4e", "#9b6b4a",
+    "#c0392b", "#d94f70", "#c2577a", "#e67e22",
+    "#9b6b4a", "#b8860b", "#6b8e4e", "#27864e",
+    "#2aa198", "#3a7ca5", "#8a6cc5", "#8c8c8c",
 ]
 
 
@@ -171,7 +171,7 @@ PREVIEW_TEXT = (
     "[14:30:02.123] [RX] received 0x1A2B ok done count=128\n"
     "[14:30:03.456] [WARN] timeout warning at 0xFF00\n"
     "[14:30:05.789] [ERR] fatal error: disable power stop\n"
-    "[14:30:06.100] info: connected started ack permission denied"
+    "[14:30:06.100] info: connected started ack permission"
 )
 
 
