@@ -17,6 +17,16 @@ v0.5 — ★ 新增「高亮」设置页（预览行 + 内置规则 + 自定义�
   [7] _build_highlight_page: 内置规则上方添加表头行（启用/名称/Aa/字色/背景）
   [8] 删除设置窗内所有 QToolTip（规避 WA_TranslucentBackground 导致黑色 tooltip 问题）
   [9] 双击显示正则时 setWordWrap(True) + 解除固定高度，还原时恢复 fixedHeight(28)
+  [10] _CustomRuleRow 重写：统一风格（QWidget/28px/6px 边距），隐藏拖动图标保留功能，
+      所有 QLineEdit/QTextEdit 选中文字改为蓝底(#2563eb)白字(#fff)
+  [11] 自定义规则视觉修复：添加表头行，容器随行数撑大（无滚动条），
+      移除 grip 让复选框顶头对齐
+  [12] 撤回 _BuiltinRuleRow 误加的 _rx_sp/_del_sp 占位符和表头多余列
+  [13] 修复内置规则容器高度被挤压：bi_container 加 minHeight=130，PANEL_H 480→560
+  [14] 对齐内置/自定义规则列：Aa 列统一 fixedWidth=38
+  [15] (撤回) 恢复 _rx(".*") 正则切换 + 表头"正则"列(fixedWidth=32)
+  [17] 撤回内置规则行末 _end_sp(16px) 及表头 hdr_end — 不改内置规则布局
+  [16] 内置规则表头加全选框（默认勾选），批量启用/禁用全部内置规则
 """
 from __future__ import annotations
 
@@ -25,7 +35,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QPushButton, QFileDialog, QWidget,
     QRadioButton, QScrollArea, QFrame, QStackedWidget,
     QButtonGroup, QLineEdit, QTextEdit, QMenu,
-    QApplication,
+    QApplication, QScrollBar,
 )
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRectF, Signal, QEvent,
@@ -43,7 +53,7 @@ from highlight_engine import (
 from color_picker import ColorPickerPopup
 
 PANEL_W = 520
-PANEL_H = 480
+PANEL_H = 560
 RADIUS = 10
 BORDER_COLOR = QColor("#b0b8c4")
 BG_COLOR = QColor("#ffffff")
@@ -587,6 +597,7 @@ class _BuiltinRuleRow(QWidget):
             "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
             "QCheckBox::indicator:hover{border-color:#3b82f6}"
         )
+        self._cs.setFixedWidth(38)
         self._cs.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._cs)
         self._fg_btn = _ColorBtn(rule["fg"])
@@ -683,9 +694,85 @@ class _BuiltinRuleRow(QWidget):
 
 
 # ═══════════════════════════════════════════
+# ★ 圆形 hover 按钮（paintEvent 绘制，不依赖 stylesheet）
+# ═══════════════════════════════════════════
+class _CircleBtn(QWidget):
+    """用 paintEvent + drawEllipse 绘制圆形 hover 背景，彻底解决 stylesheet 圆角失效"""
+    clicked = Signal()
+
+    def __init__(self, text, size=22, parent=None):
+        super().__init__(parent)
+        self._text = text
+        self._hovered = False
+        self._pressed = False
+        self._fg = "#9ca3af"
+        self._fg_hover = "#374151"
+        self._fg_pressed = "#1f2937"
+        self._bg_hover = "#f3f4f6"
+        self._bg_pressed = "#e5e7eb"
+        self._font_size = 16
+        self._font_weight = 700
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
+
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self._pressed = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        was = self._pressed
+        self._pressed = False
+        self.update()
+        if was and e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        r = min(cx, cy)
+        if self._pressed:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(self._bg_pressed))
+            p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+            fg = self._fg_pressed
+        elif self._hovered:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(self._bg_hover))
+            p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+            fg = self._fg_hover
+        else:
+            fg = self._fg
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        font = p.font()
+        font.setPixelSize(self._font_size)
+        font.setBold(self._font_weight >= 600)
+        p.setFont(font)
+        p.setPen(QColor(fg))
+        p.drawText(
+            QRectF(0, 0, self.width(), self.height()),
+            Qt.AlignmentFlag.AlignCenter,
+            self._text,
+        )
+        p.end()
+
+
+# ═══════════════════════════════════════════
 # ★ v0.5 新增：自定义规则行
 # ═══════════════════════════════════════════
-class _CustomRuleRow(QFrame):
+class _CustomRuleRow(QWidget):
     changed = Signal()
     delete_me = Signal(object)
     grip_pressed = Signal(object)
@@ -693,19 +780,10 @@ class _CustomRuleRow(QFrame):
     def __init__(self, data=None, parent=None):
         super().__init__(parent)
         self._selected = False
-        self.setFixedHeight(30)
-        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFixedHeight(28)
         h = QHBoxLayout(self)
-        h.setContentsMargins(2, 0, 4, 0)
-        h.setSpacing(4)
-        self._grip = QLabel("\u283f")
-        self._grip.setFixedWidth(12)
-        self._grip.setStyleSheet(
-            "color:#c0c0c0;font-size:14px;background:transparent;"
-        )
-        self._grip.setCursor(Qt.CursorShape.SizeAllCursor)
-        self._grip.installEventFilter(self)
-        h.addWidget(self._grip)
+        h.setContentsMargins(6, 0, 6, 0)
+        h.setSpacing(6)
         self._chk = QCheckBox()
         self._chk.setStyleSheet(_CHK_SS)
         self._chk.setChecked(True)
@@ -713,11 +791,13 @@ class _CustomRuleRow(QFrame):
         h.addWidget(self._chk)
         self._kw = QLineEdit()
         self._kw.setPlaceholderText("关键词 / 正则")
-        self._kw.setFixedHeight(22)
+        self._kw.setFixedHeight(20)
         self._kw.setStyleSheet(
             "QLineEdit{font-size:12px;color:#374151;"
             "background:#fff;border:1px solid #d1d5db;"
-            "border-radius:4px;padding:0 4px}"
+            "border-radius:4px;padding:0 4px;"
+            "selection-background-color:#2563eb;"
+            "selection-color:#ffffff}"
             "QLineEdit:focus{border-color:#3b82f6}"
         )
         self._kw.textChanged.connect(lambda _: self.changed.emit())
@@ -734,6 +814,7 @@ class _CustomRuleRow(QFrame):
             "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
             "QCheckBox::indicator:hover{border-color:#3b82f6}"
         )
+        self._rx.setFixedWidth(32)
         self._rx.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._rx)
         self._cs = QCheckBox("Aa")
@@ -748,6 +829,7 @@ class _CustomRuleRow(QFrame):
             "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
             "QCheckBox::indicator:hover{border-color:#3b82f6}"
         )
+        self._cs.setFixedWidth(38)
         self._cs.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._cs)
         fg = (data or {}).get("fg", "#374151")
@@ -758,15 +840,13 @@ class _CustomRuleRow(QFrame):
         self._bg = _ColorBtn(bg)
         self._bg.color_changed.connect(self.changed.emit)
         h.addWidget(self._bg)
-        d = QPushButton("\u00d7")
-        d.setFixedSize(16, 16)
-        d.setStyleSheet(
-            "QPushButton{background:transparent;border:none;"
-            "border-radius:3px;color:#d1d5db;"
-            "font-size:12px;font-weight:700;"
-            "min-width:0;min-height:0}"
-            "QPushButton:hover{background:#fee2e2;color:#dc2626}"
-        )
+        d = _CircleBtn("\u00d7", size=20)
+        d._fg = "#d1d5db"
+        d._fg_hover = "#dc2626"
+        d._fg_pressed = "#b91c1c"
+        d._bg_hover = "#fee2e2"
+        d._bg_pressed = "#fca5a5"
+        d._font_size = 14
         d.clicked.connect(lambda: self.delete_me.emit(self))
         h.addWidget(d)
         if data:
@@ -775,17 +855,18 @@ class _CustomRuleRow(QFrame):
             self._rx.setChecked(data.get("is_regex", False))
             self._cs.setChecked(data.get("case_sensitive", False))
 
-    def eventFilter(self, obj, event):
-        if obj is self._grip:
-            if event.type() == QEvent.Type.MouseButtonPress:
-                if event.button() == Qt.MouseButton.LeftButton:
-                    mods = QApplication.keyboardModifiers()
-                    if mods & Qt.KeyboardModifier.ControlModifier:
-                        self.set_selected(not self._selected)
-                    else:
-                        self.grip_pressed.emit(self)
-                    return True
-        return super().eventFilter(obj, event)
+    def mousePressEvent(self, event):
+        """★ [11] 点击行空白区域发起拖动（Ctrl+点击多选）"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.position().toPoint())
+            if child is None:
+                mods = QApplication.keyboardModifiers()
+                if mods & Qt.KeyboardModifier.ControlModifier:
+                    self.set_selected(not self._selected)
+                else:
+                    self.grip_pressed.emit(self)
+                return
+        super().mousePressEvent(event)
 
     def set_selected(self, s):
         self._selected = s
@@ -833,13 +914,18 @@ class _CustomRuleList(QWidget):
         self._rows: list[_CustomRuleRow] = []
         self._drag_row = None
         self._v = QVBoxLayout(self)
-        self._v.setContentsMargins(4, 4, 4, 4)
+        self._v.setContentsMargins(0, 0, 0, 0)
         self._v.setSpacing(2)
-        self._v.addStretch(1)
         self.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
         )
         self.customContextMenuRequested.connect(self._ctx)
+
+    def _update_height(self):
+        """根据行数动态调整自身最小高度，让父容器跟着撑大"""
+        n = len(self._rows)
+        self.setMinimumHeight(max(0, n * 30))  # 28px row + 2px spacing
+        self.updateGeometry()  # 通知父布局重新计算
 
     def add_rule(self, data=None):
         if len(self._rows) >= 200:
@@ -848,8 +934,9 @@ class _CustomRuleList(QWidget):
         row.changed.connect(self.changed.emit)
         row.delete_me.connect(self._del)
         row.grip_pressed.connect(self._start_drag)
-        self._v.insertWidget(self._v.count() - 1, row)
+        self._v.insertWidget(self._v.count(), row)
         self._rows.append(row)
+        self._update_height()
         self.changed.emit()
 
     def _del(self, row):
@@ -857,6 +944,7 @@ class _CustomRuleList(QWidget):
             self._rows.remove(row)
             self._v.removeWidget(row)
             row.deleteLater()
+            self._update_height()
             self.changed.emit()
 
     def _start_drag(self, row):
@@ -939,6 +1027,54 @@ class _CustomRuleList(QWidget):
 
 
 # ═══════════════════════════════════════════
+# ★ 带三角箭头的自定义滚动条
+# ═══════════════════════════════════════════
+class _ArrowScrollBar(QScrollBar):
+    """竖向滚动条 — 顶/底绘制三角箭头指示器"""
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Vertical, parent)
+        self.setStyleSheet(
+            "QScrollBar:vertical{"
+            "  width:8px;background:transparent;"
+            "  margin:12px 0 12px 0}"
+            "QScrollBar::handle:vertical{"
+            "  background:#d1d5db;border-radius:3px;min-height:20px}"
+            "QScrollBar::handle:vertical:hover{background:#3b82f6}"
+            "QScrollBar::sub-line:vertical{height:10px;background:transparent}"
+            "QScrollBar::add-line:vertical{height:10px;background:transparent}"
+            "QScrollBar::add-page,QScrollBar::sub-page{background:transparent}"
+        )
+
+    def paintEvent(self, event):
+        if self.maximum() <= 0:
+            return  # 无需滚动时完全隐藏整个滚动条（保留占位）
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#b0b8c4"))
+        w = self.width()
+        cx = w / 2.0
+        # ▲ 上三角
+        up = QPainterPath()
+        up.moveTo(cx, 2)
+        up.lineTo(cx + 3, 8)
+        up.lineTo(cx - 3, 8)
+        up.closeSubpath()
+        p.drawPath(up)
+        # ▼ 下三角
+        h = self.height()
+        dn = QPainterPath()
+        dn.moveTo(cx, h - 2)
+        dn.lineTo(cx + 3, h - 8)
+        dn.lineTo(cx - 3, h - 8)
+        dn.closeSubpath()
+        p.drawPath(dn)
+        p.end()
+
+
+# ═══════════════════════════════════════════
 # 主设置弹窗（全屏遮罩模式）
 # ═══════════════════════════════════════════
 class SettingsDialog(QDialog):
@@ -1007,7 +1143,7 @@ class SettingsDialog(QDialog):
         # ── 内容区 ──
         content = QWidget()
         content_v = QVBoxLayout(content)
-        content_v.setContentsMargins(16, 4, 16, 14)
+        content_v.setContentsMargins(16, 4, 8, 14)
         content_v.setSpacing(0)
 
         body_h = QHBoxLayout()
@@ -1034,9 +1170,7 @@ class SettingsDialog(QDialog):
         self._stack.addWidget(self._build_log_page())
         self._stack.addWidget(self._build_highlight_page())
         body_h.addWidget(self._stack, stretch=1)
-        self._nav_group.idClicked.connect(
-            self._stack.setCurrentIndex
-        )
+        self._nav_group.idClicked.connect(self._on_nav)
         content_v.addLayout(body_h, stretch=1)
 
         content_v.addSpacing(12)
@@ -1053,14 +1187,19 @@ class SettingsDialog(QDialog):
         page = QWidget()
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(10)
+        v.setSpacing(0)
+
+        log_content = QWidget()
+        _lc_v = QVBoxLayout(log_content)
+        _lc_v.setContentsMargins(0, 0, 0, 0)
+        _lc_v.setSpacing(10)
 
         self._chk_enabled = QCheckBox(
             "启用实时日志记录（连接串口时自动开始）"
         )
         self._chk_enabled.setStyleSheet(_CHK_SS)
         self._chk_enabled.toggled.connect(self._on_enabled_toggled)
-        v.addWidget(self._chk_enabled)
+        _lc_v.addWidget(self._chk_enabled)
 
         self._options_widget = QWidget()
         opts_v = QVBoxLayout(self._options_widget)
@@ -1084,7 +1223,9 @@ class SettingsDialog(QDialog):
             "  background: #ffffff;"
             "  border: 1.5px solid #d1d5db;"
             "  border-radius: 6px; padding: 0px 4px 2px 4px;"
-            "  min-height: 24px; max-height: 28px; }"
+            "  min-height: 24px; max-height: 28px;"
+            "  selection-background-color: #2563eb;"
+            "  selection-color: #ffffff; }"
             "QLineEdit:focus { border-color: #3b82f6; }"
             "QLineEdit:disabled { background: #f3f4f6;"
             "  color: #c0c0c0; border-color: #e5e7eb; }"
@@ -1172,7 +1313,52 @@ class SettingsDialog(QDialog):
         self._scroll_container.setMaximumHeight(120)
         opts_v.addWidget(self._scroll_container)
         opts_v.addStretch(1)
-        v.addWidget(self._options_widget)
+        _lc_v.addWidget(self._options_widget)
+
+        self._log_scroll = QScrollArea()
+        self._log_scroll.setWidget(log_content)
+        self._log_scroll.setWidgetResizable(True)
+        self._log_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._log_scroll.setVerticalScrollBar(_ArrowScrollBar())
+        self._log_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        )
+        self._log_scroll.setViewportMargins(0, 0, 12, 0)
+        self._log_scroll.setStyleSheet(
+            "QScrollArea{border:none;background:transparent}"
+        )
+        self._log_scroll.viewport().setStyleSheet(
+            "background:transparent;"
+        )
+        v.addWidget(self._log_scroll)
+
+        # ★ sticky 置顶覆盖层
+        self._sticky_log = QWidget(page)
+        _sl = QHBoxLayout(self._sticky_log)
+        _sl.setContentsMargins(0, 0, 12, 0)
+        _sl.setSpacing(0)
+        self._sticky_log_chk = QCheckBox(
+            "启用实时日志记录（连接串口时自动开始）"
+        )
+        self._sticky_log_chk.setStyleSheet(_CHK_SS)
+        self._sticky_log_chk.setChecked(
+            self._chk_enabled.isChecked()
+        )
+        _sl.addWidget(self._sticky_log_chk)
+        self._sticky_log.setStyleSheet(
+            "background:#ffffff;"
+            "border-bottom:1px solid #e5e7eb;"
+        )
+        self._sticky_log.hide()
+        self._sticky_log_chk.toggled.connect(
+            self._chk_enabled.setChecked
+        )
+        self._chk_enabled.toggled.connect(
+            self._sticky_log_chk.setChecked
+        )
+        self._log_scroll.verticalScrollBar().valueChanged.connect(
+            self._on_log_sticky
+        )
         return page
 
     def _on_enabled_toggled(self, checked):
@@ -1229,6 +1415,7 @@ class SettingsDialog(QDialog):
             self.move(pw.mapToGlobal(QPoint(0, 0)))
         self._center_panel()
         self._clip_panel()
+        self._update_hl_body_size()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1263,7 +1450,13 @@ class SettingsDialog(QDialog):
         page = QWidget()
         v = QVBoxLayout(page)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(8)
+        v.setSpacing(0)
+
+        # ★ 内容包装器（checkbox + body 都在滚动区内）
+        self._hl_content = QWidget()
+        _hlc_v = QVBoxLayout(self._hl_content)
+        _hlc_v.setContentsMargins(0, 0, 0, 0)
+        _hlc_v.setSpacing(8)
 
         # ★ 启用高亮
         self._chk_hl_enabled = QCheckBox("启用关键词高亮")
@@ -1272,7 +1465,7 @@ class SettingsDialog(QDialog):
         self._chk_hl_enabled.toggled.connect(
             self._on_hl_enabled
         )
-        v.addWidget(self._chk_hl_enabled)
+        _hlc_v.addWidget(self._chk_hl_enabled)
 
         self._hl_body = QWidget()
         body_v = QVBoxLayout(self._hl_body)
@@ -1293,7 +1486,9 @@ class SettingsDialog(QDialog):
             "QTextEdit{background:#ffffff;color:#1e293b;"
             "border:1px solid #e5e7eb;border-radius:4px;"
             "font-family:Consolas,monospace;font-size:12px;"
-            "padding:2px 4px}"
+            "padding:2px 4px;"
+            "selection-background-color:#2563eb;"
+            "selection-color:#ffffff}"
             "QScrollBar:vertical{width:4px;background:transparent}"
             "QScrollBar::handle:vertical{background:#d1d5db;"
             "border-radius:2px}"
@@ -1337,21 +1532,33 @@ class SettingsDialog(QDialog):
         bi_v.setContentsMargins(4, 4, 4, 4)
         bi_v.setSpacing(2)
 
-        # ★ 表头
+        # ★ 表头（含全选框）[16]
         hdr = QWidget()
         hdr.setFixedHeight(18)
         hdr_h = QHBoxLayout(hdr)
         hdr_h.setContentsMargins(6, 0, 6, 0)
         hdr_h.setSpacing(6)
         _hdr_ss = "font-size:10px;color:#9ca3af;background:transparent;"
-        hdr_chk = QLabel("")
-        hdr_chk.setFixedWidth(16)
-        hdr_h.addWidget(hdr_chk)
+        self._bi_chk_all = QCheckBox()
+        self._bi_chk_all.setStyleSheet(
+            "QCheckBox{spacing:0;background:transparent}"
+            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
+            "QCheckBox::indicator:unchecked{"
+            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
+            "QCheckBox::indicator:checked{"
+            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
+            "QCheckBox::indicator:hover{border-color:#3b82f6}"
+        )
+        self._bi_chk_all.setChecked(True)
+        self._bi_chk_all.toggled.connect(self._toggle_bi_all)
+        hdr_h.addWidget(self._bi_chk_all)
         hdr_name = QLabel("名称")
         hdr_name.setStyleSheet(_hdr_ss)
+        hdr_name.setIndent(4)
         hdr_h.addWidget(hdr_name, stretch=1)
         hdr_cs = QLabel("大小写")
         hdr_cs.setStyleSheet(_hdr_ss)
+        hdr_cs.setFixedWidth(38)
         hdr_h.addWidget(hdr_cs)
         hdr_fg = QLabel("字色")
         hdr_fg.setStyleSheet(_hdr_ss)
@@ -1386,57 +1593,159 @@ class SettingsDialog(QDialog):
         bi_container = _RoundedScrollContainer(
             bi_scroll
         )
+        bi_container.setMinimumHeight(130)
         bi_container.setMaximumHeight(130)
         body_v.addWidget(bi_container)
 
-        # ★ 自定义规则
+        # ★ 自定义规则 + 添加按钮（同一行）
+        cu_title_h = QHBoxLayout()
+        cu_title_h.setSpacing(6)
         lbl_c = QLabel("自定义规则")
         lbl_c.setStyleSheet(
             "font-size:12px;color:#6b7280;"
             "background:transparent;"
         )
-        body_v.addWidget(lbl_c)
+        cu_title_h.addWidget(lbl_c)
+        btn_add = _CircleBtn("+", size=22)
+        btn_add.clicked.connect(self._add_user_rule)
+        cu_title_h.addWidget(btn_add)
+        cu_title_h.addStretch(1)
+        body_v.addLayout(cu_title_h)
 
+        # ★ 圆角边框容器 + 表头 + 规则列表（带滚动条）
+        cu_frame = QWidget()
+        cu_frame.setObjectName("CuFrame")
+        cu_frame.setStyleSheet(
+            "QWidget#CuFrame{"
+            "background:#ffffff;"
+            "border:1.5px solid #d1d5db;"
+            "border-radius:6px}"
+        )
+        cu_frame_v = QVBoxLayout(cu_frame)
+        cu_frame_v.setContentsMargins(4, 4, 4, 4)
+        cu_frame_v.setSpacing(2)
+        cu_hdr = QWidget()
+        cu_hdr.setFixedHeight(18)
+        cu_hdr_h = QHBoxLayout(cu_hdr)
+        cu_hdr_h.setContentsMargins(6, 0, 6, 0)
+        cu_hdr_h.setSpacing(6)
+        self._cu_chk_all = QCheckBox()
+        self._cu_chk_all.setStyleSheet(
+            "QCheckBox{spacing:0;background:transparent}"
+            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
+            "QCheckBox::indicator:unchecked{"
+            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
+            "QCheckBox::indicator:checked{"
+            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
+            "QCheckBox::indicator:hover{border-color:#3b82f6}"
+        )
+        self._cu_chk_all.setChecked(True)
+        self._cu_chk_all.toggled.connect(self._toggle_cu_all)
+        cu_hdr_h.addWidget(self._cu_chk_all)
+        cu_hdr_kw = QLabel("关键词")
+        cu_hdr_kw.setStyleSheet(_hdr_ss)
+        cu_hdr_kw.setIndent(4)
+        cu_hdr_h.addWidget(cu_hdr_kw, stretch=1)
+        cu_hdr_rx = QLabel("正则")
+        cu_hdr_rx.setStyleSheet(_hdr_ss)
+        cu_hdr_rx.setFixedWidth(32)
+        cu_hdr_h.addWidget(cu_hdr_rx)
+        cu_hdr_cs = QLabel("大小写")
+        cu_hdr_cs.setStyleSheet(_hdr_ss)
+        cu_hdr_cs.setFixedWidth(38)
+        cu_hdr_h.addWidget(cu_hdr_cs)
+        cu_hdr_fg = QLabel("字色")
+        cu_hdr_fg.setStyleSheet(_hdr_ss)
+        cu_hdr_fg.setFixedWidth(22)
+        cu_hdr_h.addWidget(cu_hdr_fg)
+        cu_hdr_bg = QLabel("背景")
+        cu_hdr_bg.setStyleSheet(_hdr_ss)
+        cu_hdr_bg.setFixedWidth(22)
+        cu_hdr_h.addWidget(cu_hdr_bg)
+        cu_hdr_del = QLabel("")
+        cu_hdr_del.setFixedWidth(20)
+        cu_hdr_h.addWidget(cu_hdr_del)
+        cu_frame_v.addWidget(cu_hdr)
         self._custom_list = _CustomRuleList()
         self._custom_list.changed.connect(
             self._on_hl_changed
         )
-
-        cu_scroll = QScrollArea()
-        cu_scroll.setWidget(self._custom_list)
-        cu_scroll.setWidgetResizable(True)
-        cu_scroll.setFrameShape(
-            QFrame.Shape.NoFrame
-        )
         self._custom_list.setStyleSheet(
             "background:transparent;"
         )
-        cu_container = _RoundedScrollContainer(
-            cu_scroll
-        )
-        cu_container.setMaximumHeight(100)
-        body_v.addWidget(cu_container)
-
-        # ★ 添加按钮
-        btn_add = QPushButton("+ 添加")
-        btn_add.setFixedHeight(26)
-        btn_add.setStyleSheet(
-            "QPushButton{background:transparent;"
-            "border:1px dashed #d1d5db;"
-            "border-radius:4px;color:#6b7280;"
-            "font-size:12px;min-height:0;min-width:0}"
-            "QPushButton:hover{background:#f9fafb;"
-            "border-color:#9ca3af;color:#374151}"
-        )
-        btn_add.clicked.connect(self._add_user_rule)
-        body_v.addWidget(btn_add)
+        cu_frame_v.addWidget(self._custom_list)
+        cu_frame_v.addStretch(1)
+        cu_frame.setMinimumHeight(60)
+        body_v.addWidget(cu_frame)
         body_v.addStretch(1)
 
-        v.addWidget(self._hl_body)
+        _hlc_v.addWidget(self._hl_body)
+
+        self._hl_scroll = QScrollArea()
+        self._hl_scroll.setWidget(self._hl_content)
+        self._hl_scroll.setWidgetResizable(True)
+        self._hl_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._hl_scroll.setStyleSheet(
+            "QScrollArea{border:none;background:transparent}"
+        )
+        self._hl_scroll.setVerticalScrollBar(_ArrowScrollBar())
+        self._hl_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+        )
+        self._hl_scroll.setViewportMargins(0, 0, 12, 0)
+        self._hl_scroll.viewport().setStyleSheet("background:transparent;")
+        v.addWidget(self._hl_scroll)
+
+        # ★ sticky 置顶覆盖层（滚过 checkbox 时固定在顶部）
+        self._sticky_hl = QWidget(page)
+        _sh = QHBoxLayout(self._sticky_hl)
+        _sh.setContentsMargins(0, 0, 12, 0)
+        _sh.setSpacing(0)
+        self._sticky_hl_chk = QCheckBox("启用关键词高亮")
+        self._sticky_hl_chk.setStyleSheet(_CHK_SS)
+        self._sticky_hl_chk.setChecked(
+            self._chk_hl_enabled.isChecked()
+        )
+        _sh.addWidget(self._sticky_hl_chk)
+        self._sticky_hl.setStyleSheet(
+            "background:#ffffff;"
+            "border-bottom:1px solid #e5e7eb;"
+        )
+        self._sticky_hl.hide()
+        self._sticky_hl_chk.toggled.connect(
+            self._chk_hl_enabled.setChecked
+        )
+        self._chk_hl_enabled.toggled.connect(
+            self._sticky_hl_chk.setChecked
+        )
+        self._hl_scroll.verticalScrollBar().valueChanged.connect(
+            self._on_hl_sticky
+        )
         return page
+
+    def _on_nav(self, idx):
+        self._stack.setCurrentIndex(idx)
+        if idx == 1:
+            self._update_hl_body_size()
 
     def _on_hl_enabled(self, checked):
         self._hl_body.setEnabled(checked)
+        self._on_hl_changed()
+
+    def _toggle_bi_all(self, checked):
+        """★ [16] 全选/全不选内置规则"""
+        for row in self._builtin_rows:
+            row._chk.blockSignals(True)
+            row._chk.setChecked(checked)
+            row._chk.blockSignals(False)
+        self._on_hl_changed()
+
+    def _toggle_cu_all(self, checked):
+        """★ 全选/全不选自定义规则"""
+        for row in self._custom_list._rows:
+            row._chk.blockSignals(True)
+            row._chk.setChecked(checked)
+            row._chk.blockSignals(False)
         self._on_hl_changed()
 
     def _add_user_rule(self):
@@ -1446,6 +1755,38 @@ class SettingsDialog(QDialog):
         self._refresh_preview()
         self._auto_save()
         self.highlight_changed.emit()
+        self._update_hl_body_size()
+
+    def _update_hl_body_size(self):
+        """强制内容最小高度跟随内容，让 hl_scroll 出现滚动条"""
+        self._custom_list.layout().activate()
+        self._hl_body.layout().activate()
+        self._hl_content.layout().activate()
+        h = self._hl_content.layout().sizeHint().height()
+        min_h = self._hl_content.layout().minimumSize().height()
+        self._hl_content.setMinimumHeight(max(h, min_h))
+
+    def _on_hl_sticky(self, value):
+        """高亮页：checkbox 滚出视口时显示 sticky 覆盖"""
+        chk_h = self._chk_hl_enabled.height() + 8
+        if value > chk_h:
+            vp_w = self._hl_scroll.viewport().width()
+            self._sticky_hl.setGeometry(0, 0, vp_w, chk_h)
+            self._sticky_hl.raise_()
+            self._sticky_hl.show()
+        else:
+            self._sticky_hl.hide()
+
+    def _on_log_sticky(self, value):
+        """日志页：checkbox 滚出视口时显示 sticky 覆盖"""
+        chk_h = self._chk_enabled.height() + 8
+        if value > chk_h:
+            vp_w = self._log_scroll.viewport().width()
+            self._sticky_log.setGeometry(0, 0, vp_w, chk_h)
+            self._sticky_log.raise_()
+            self._sticky_log.show()
+        else:
+            self._sticky_log.hide()
 
     def _refresh_preview(self):
         cfg = self._build_hl_config()
@@ -1548,6 +1889,9 @@ class SettingsDialog(QDialog):
             # ★ 高亮页重置
             self._chk_hl_enabled.setChecked(True)
             self._default_fg_btn.set_color("#1e293b")
+            self._bi_chk_all.blockSignals(True)
+            self._bi_chk_all.setChecked(True)
+            self._bi_chk_all.blockSignals(False)
             for row in self._builtin_rows:
                 row.reset()
             self._custom_list.clear_all()
