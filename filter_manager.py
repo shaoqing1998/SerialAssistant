@@ -51,15 +51,11 @@ class FilteredLogView(RoundedContextTextEdit):
         font = QFont("Consolas", 12)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
-        self.setStyleSheet(
-            "QTextEdit { border: 1px solid #e5e7eb; "
-            "border-radius: 6px; background: #ffffff; "
-            "color: #1e293b; padding: 2px; }"
-        )
         self._highlighter = None  # ★ v0.5
 
         # ★ v0.6: 字号调节 + 右下角提示浮层
         self._font_size = 12
+        self._update_stylesheet()  # ★ 必须在 _font_size 赋值之后
         self._size_tip = QLabel(self)
         self._size_tip.setAlignment(
             Qt.AlignmentFlag.AlignCenter
@@ -146,15 +142,30 @@ class FilteredLogView(RoundedContextTextEdit):
         return "\n".join(lines) + "\n"
 
 
+    # ★ v0.6 fix: instance stylesheet 覆盖全局 STYLE 的 font-size
+    def _update_stylesheet(self):
+        self.setStyleSheet(
+            "QTextEdit { border: 1px solid #e5e7eb; "
+            "border-radius: 6px; background: #ffffff; "
+            "color: #1e293b; padding: 2px; "
+            f"font-size: {self._font_size}pt; "
+            "}"
+        )
+
+    def _apply_font_size(self, size):
+        """统一字号入口 — QFont + stylesheet 双写"""
+        self._font_size = size
+        font = self.font()
+        font.setPointSize(size)
+        self.setFont(font)
+        self._update_stylesheet()
+
     # ★ v0.6: 字号调节
     def _change_font_size(self, delta):
         new = max(8, min(30, self._font_size + delta))
         if new == self._font_size:
             return
-        self._font_size = new
-        font = self.font()
-        font.setPointSize(new)
-        self.setFont(font)
+        self._apply_font_size(new)
         self._show_size_tip()
         self.font_size_changed.emit(new)
 
@@ -210,10 +221,40 @@ class FilteredLogView(RoundedContextTextEdit):
                 "font_size", 12
             )
             if fs != self._font_size:
-                self._font_size = fs
-                font = self.font()
-                font.setPointSize(fs)
-                self.setFont(font)
+                self._apply_font_size(fs)
+            # ★ v0.6: 同步自动换行设置
+            wrap = config.get("highlight", {}).get(
+                "word_wrap", False
+            )
+            wrap_mode = (
+                RoundedContextTextEdit.LineWrapMode.WidgetWidth
+                if wrap
+                else RoundedContextTextEdit.LineWrapMode.NoWrap
+            )
+            self.setLineWrapMode(wrap_mode)
+        else:
+            self._highlighter.set_enabled(False)
+
+    def update_highlighter_only(self, config: dict | None):
+        """更新高亮配置但不 rehighlight 已有文本"""
+        if not hasattr(self, '_highlighter') or self._highlighter is None:
+            self._highlighter = LogHighlighter(self.document())
+        if config:
+            self._highlighter.load_config(config, rehighlight=False)
+            fs = config.get("highlight", {}).get(
+                "font_size", 12
+            )
+            if fs != self._font_size:
+                self._apply_font_size(fs)
+            wrap = config.get("highlight", {}).get(
+                "word_wrap", False
+            )
+            wrap_mode = (
+                RoundedContextTextEdit.LineWrapMode.WidgetWidth
+                if wrap
+                else RoundedContextTextEdit.LineWrapMode.NoWrap
+            )
+            self.setLineWrapMode(wrap_mode)
         else:
             self._highlighter.set_enabled(False)
 
@@ -633,8 +674,17 @@ class FilterManager(QWidget):
             if isinstance(v, FilteredLogView):
                 v.set_highlighter(config)
 
-    # ★ v0.6 fix: 滚轮调字号 → 写入 config + 同步所有 Tab
-    def _on_font_size_changed(self, size):
+    # ★ v0.6: 更新高亮配置但不 rehighlight — 仅新日志生效
+    def update_highlighter_config(self, config: dict):
+        """将高亮配置应用到所有 Tab 但不 rehighlight"""
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                v.update_highlighter_only(config)
+
+    # ★ v0.6 fix: 字号专用通路 — 不触发 rehighlight
+    def update_font_size(self, size):
+        """设置页/外部调用 — 只改字号，不 rehighlight"""
         hl = self._config.setdefault("highlight", {})
         hl["font_size"] = size
         from config import save_config
@@ -645,10 +695,27 @@ class FilterManager(QWidget):
                 isinstance(v, FilteredLogView)
                 and v._font_size != size
             ):
-                v._font_size = size
-                font = v.font()
-                font.setPointSize(size)
-                v.setFont(font)
+                v._apply_font_size(size)
+
+    # ★ v0.6: 自动换行开关
+    def update_word_wrap(self, enabled):
+        """设置页调用 — 切换所有 Tab 换行模式"""
+        hl = self._config.setdefault("highlight", {})
+        hl["word_wrap"] = enabled
+        from config import save_config
+        save_config(self._config)
+        mode = (
+            FilteredLogView.LineWrapMode.WidgetWidth
+            if enabled
+            else FilteredLogView.LineWrapMode.NoWrap
+        )
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                v.setLineWrapMode(mode)
+
+    def _on_font_size_changed(self, size):
+        self.update_font_size(size)
 
     # ── 核心分发 ──────────────────────────
 

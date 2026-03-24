@@ -17,8 +17,8 @@ _DEFAULT_CONFIG = {
         "timeout": 0.1,
     },
     "ui": {
-        "window_width": 1100,
-        "window_height": 650,
+        "window_width": 0,
+        "window_height": 0,
         "font_family": "Consolas",
         "font_size": 10,
         "max_log_lines": 5000,
@@ -36,7 +36,7 @@ _DEFAULT_CONFIG = {
         "record_all_tabs": True,
         "selected_tabs": [],
     },
-    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": False}}, "user_rules": []}
+    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": True, "fg": "#d97706"}}, "user_rules": [], "word_wrap": False}
 }
 def load_config() -> dict:
     """加载配置文件，若不存在则返回默认配置"""

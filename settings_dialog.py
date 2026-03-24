@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QPushButton, QFileDialog, QWidget,
     QRadioButton, QScrollArea, QFrame, QStackedWidget,
     QButtonGroup, QLineEdit, QTextEdit, QMenu,
-    QApplication, QScrollBar, QSpinBox,
+    QApplication, QScrollBar,
 )
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRectF, Signal, QEvent,
@@ -665,9 +665,7 @@ class _BuiltinRuleRow(QWidget):
         return d
 
     def reset(self):
-        # ★ bracket 规则默认不勾选，其余默认勾选
-        default_on = (self._id != "bracket")
-        self._chk.setChecked(default_on)
+        self._chk.setChecked(True)
         self._cs.setChecked(False)
         self._fg_btn.set_color(self._default_fg)
         self._bg_btn.set_color(self._default_bg or "#ffffff")
@@ -1042,8 +1040,6 @@ class _CustomRuleList(QWidget):
     def clear_selection(self):
         for r in self._rows:
             r.set_selected(False)
-
-
 # ═══════════════════════════════════════════
 # ★ 带三角箭头的自定义滚动条
 # ═══════════════════════════════════════════
@@ -1110,7 +1106,7 @@ _KW_HELP = """\
 • 默认不区分大小写
 • 勾选 Aa 后精确匹配大小写"""
 
-_RX_HELP = """\
+_RX_HELP = r"""\
 正则表达式规则
 ━━━━━━━━━━━━━━━━━━━━
 勾选 .* 后，输入内容作为正则表达式。
@@ -1123,7 +1119,7 @@ _RX_HELP = """\
   ?      零或一次   colou?r
   \\d     数字      \\d+ → 123
   \\b     词边界    \\berror\\b
-  [...]  字符集    [aeiou] 任意元音
+  \[...\]  字符集    \[aeiou\] 任意元音
   (...)  分组      (err|fail)
   \\.     转义点号   192\\.168
 
@@ -1133,12 +1129,12 @@ _RX_HELP = """\
     → 192.168.1.1
 
   匹配 HEX 地址
-    0x[0-9a-fA-F]+
+    0x\[0-9a-fA-F\]+
     → 0x1A2B, 0xFF00
 
   匹配方括号标签
-    \\[.*?\\]
-    → [RX], [WARN], [ERR]
+    \\\[.*?\\\]
+    → \[RX\], \[WARN\], \[ERR\]
 
   匹配多个错误关键词
     error|fail|fatal
@@ -1233,6 +1229,8 @@ class _HelpPopup(QDialog):
 # ═══════════════════════════════════════════
 class SettingsDialog(QDialog):
     highlight_changed = Signal()
+    font_size_changed = Signal(int)  # ★ v0.6 fix: 字号专用信号，不触发 rehighlight
+    word_wrap_changed = Signal(bool)   # ★ v0.6: 自动换行开关
 
     def __init__(self, config, tab_names, parent=None):
         super().__init__(parent)
@@ -1640,39 +1638,52 @@ class SettingsDialog(QDialog):
             "background:transparent;"
         )
         fs_h.addWidget(lbl_fs)
-        self._spin_font_size = QSpinBox()
-        self._spin_font_size.setObjectName(
-            "FontSizeSpin"
+        # ★ ◀ [字号] ▶ 自定义字号控件
+        fs_ctrl = QWidget()
+        fs_ctrl_h = QHBoxLayout(fs_ctrl)
+        fs_ctrl_h.setContentsMargins(0, 0, 0, 0)
+        fs_ctrl_h.setSpacing(1)
+        self._fs_dec_btn = _CircleBtn("◀", size=28)
+        self._fs_dec_btn._font_size = 22
+        self._fs_dec_btn._fg = "#9ca3af"
+        self._fs_dec_btn._fg_hover = "#374151"
+        self._fs_dec_btn.clicked.connect(
+            self._fs_dec
         )
-        self._spin_font_size.setRange(8, 30)
-        self._spin_font_size.setValue(
-            _hl_cfg.get("font_size", 12)
+        fs_ctrl_h.addWidget(self._fs_dec_btn)
+        self._fs_edit = QLineEdit()
+        self._fs_edit.setFixedWidth(28)
+        self._fs_edit.setFixedHeight(18)
+        self._fs_edit.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
         )
-        self._spin_font_size.setFixedWidth(36)
-        self._spin_font_size.setFixedHeight(18)
-        self._spin_font_size.setAlignment(
-            Qt.AlignmentFlag.AlignLeft
+        self._fs_edit.setMaxLength(2)
+        self._fs_edit.setText(
+            str(_hl_cfg.get("font_size", 12))
         )
-        # ★ 用 #ID 选择器覆盖全局 QSpinBox{min-height:26px}
-        self._spin_font_size.setStyleSheet(
-            "#FontSizeSpin{font-size:11px;"
+        self._fs_edit.setStyleSheet(
+            "QLineEdit{font-size:11px;"
             "color:#374151;background:#fff;"
             "border:1.5px solid #d1d5db;"
-            "border-radius:3px;"
-            "padding:0 0 0 2px;"
-            "min-height:0;max-height:18px}"
-            "#FontSizeSpin:focus{"
-            "border-color:#3b82f6}"
-            "#FontSizeSpin::up-button,"
-            "#FontSizeSpin::down-button{"
-            "width:8px;border:none;"
-            "background:transparent}"
+            "border-radius:3px;padding:0;"
+            "selection-background-color:#2563eb;"
+            "selection-color:#fff}"
+            "QLineEdit:focus{border-color:#3b82f6}"
         )
-        self._spin_font_size.valueChanged.connect(
-            self._on_hl_changed
+        self._fs_edit.editingFinished.connect(
+            self._fs_edited
         )
+        fs_ctrl_h.addWidget(self._fs_edit)
+        self._fs_inc_btn = _CircleBtn("▶", size=28)
+        self._fs_inc_btn._font_size = 22
+        self._fs_inc_btn._fg = "#9ca3af"
+        self._fs_inc_btn._fg_hover = "#374151"
+        self._fs_inc_btn.clicked.connect(
+            self._fs_inc
+        )
+        fs_ctrl_h.addWidget(self._fs_inc_btn)
         fs_h.addWidget(
-            self._spin_font_size, 0,
+            fs_ctrl, 0,
             Qt.AlignmentFlag.AlignVCenter,
         )
         lbl_pt = QLabel("pt")
@@ -1683,6 +1694,17 @@ class SettingsDialog(QDialog):
         fs_h.addWidget(lbl_pt)
         fs_h.addStretch(1)
         _hlc_v.addLayout(fs_h)
+
+        # ★ 自动换行
+        self._chk_wrap = QCheckBox("自动换行")
+        self._chk_wrap.setStyleSheet(_CHK_SS)
+        self._chk_wrap.setChecked(
+            _hl_cfg.get("word_wrap", False)
+        )
+        self._chk_wrap.toggled.connect(
+            self._on_wrap_changed
+        )
+        _hlc_v.addWidget(self._chk_wrap)
 
         # ★ 启用高亮
         self._chk_hl_enabled = QCheckBox("启用关键词高亮")
@@ -1988,17 +2010,57 @@ class SettingsDialog(QDialog):
 
     def _add_user_rule(self):
         self._custom_list.add_rule()
+        self._update_hl_body_size()
 
     def _show_help(self, btn, text, width=280):
         """显示帮助弹窗 — 居中，外围置灰"""
         popup = _HelpPopup(text, self, width=width)
         popup.exec()
 
-    def _on_hl_changed(self):
+    def _fs_value(self):
+        try:
+            v = int(self._fs_edit.text())
+            return max(8, min(30, v))
+        except ValueError:
+            return 12
+
+    def _fs_set_value(self, v):
+        self._fs_edit.setText(
+            str(max(8, min(30, v)))
+        )
+
+    def _fs_dec(self):
+        self._fs_set_value(self._fs_value() - 1)
+        self._on_fs_changed()
+
+    def _fs_inc(self):
+        self._fs_set_value(self._fs_value() + 1)
+        self._on_fs_changed()
+
+    def _fs_edited(self):
+        self._fs_set_value(self._fs_value())
+        self._on_fs_changed()
+
+    def _on_fs_changed(self):
+        """★ v0.6 fix: 字号变化专用通路 — 不触发 highlight_changed"""
         self._refresh_preview()
         self._auto_save()
-        self.highlight_changed.emit()
-        self._update_hl_body_size()
+        self.font_size_changed.emit(self._fs_value())
+
+    def _on_wrap_changed(self, checked):
+        """★ v0.6: 自动换行开关 — 不触发 rehighlight"""
+        self._auto_save()
+        self.word_wrap_changed.emit(checked)
+
+    def _on_hl_changed(self, _=""):
+        """★ 接受可选 str 参数（color_changed Signal(str) 会传值）"""
+        self._build_hl_config()
+        self._refresh_preview()
+        self._auto_save()
+        # ★ v0.6 fix: 不再实时 emit highlight_changed
+        #   设置弹窗是全屏遮罩，用户看不到背后日志区，
+        #   实时 rehighlight 全部 Tab 毫无意义且造成卡顿。
+        #   关闭设置时 _open_settings 已有 refresh_highlighter 兜底。
 
     def _update_hl_body_size(self):
         """强制内容最小高度跟随内容，让 hl_scroll 出现滚动条"""
@@ -2043,7 +2105,8 @@ class SettingsDialog(QDialog):
         cfg = {
             "enabled": self._chk_hl_enabled.isChecked(),
             "default_fg": self._default_fg_btn.color(),
-            "font_size": self._spin_font_size.value(),
+            "font_size": self._fs_value(),
+            "word_wrap": self._chk_wrap.isChecked(),
             "builtin_rules": {},
             "user_rules": [],
         }
@@ -2089,7 +2152,7 @@ class SettingsDialog(QDialog):
         self._chk_hl_enabled.setChecked(
             hl_cfg.get("enabled", True)
         )
-        self._spin_font_size.setValue(
+        self._fs_set_value(
             hl_cfg.get("font_size", 12)
         )
         for ur in hl_cfg.get("user_rules", []):
@@ -2142,7 +2205,7 @@ class SettingsDialog(QDialog):
         elif idx == 1:
             # ★ 字体页重置
             self._chk_hl_enabled.setChecked(True)
-            self._spin_font_size.setValue(12)
+            self._fs_set_value(12)
             self._default_fg_btn.set_color("#1e293b")
             self._bi_chk_all.blockSignals(True)
             self._bi_chk_all.setChecked(True)

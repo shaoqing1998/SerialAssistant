@@ -108,11 +108,11 @@ BUILTIN_RULES = [
         "fg": "#8a6cc5",
         "bg": None,
     },
-    {
+        {
         "id": "number",
         "name": "纯数字",
-        "pattern": r"(?<![\.\.\w])\d+(?![\.\.\w])",
-        "fg": "#8a6cc5",
+        "pattern": r"(?<![\..\w])\d+(?![\..\w])",
+        "fg": "#6366f1",
         "bg": None,
     },
     {
@@ -161,9 +161,10 @@ BUILTIN_RULES = [
     {
         "id": "bracket",
         "name": "方括号标签",
-        "pattern": r"\[[A-Za-z_][\w.:/-]*\]",
-        "fg": "#5b8cc2",
+        "pattern": r"\[[\w.:/-]+\]",
+        "fg": "#d97706",
         "bg": None,
+        "bracket_only": True,
     },
 ]
 
@@ -208,7 +209,7 @@ class LogHighlighter(QSyntaxHighlighter):
                 self._builtin.append(
                     (rx, self._make_fmt(
                         r["fg"], r.get("bg")
-                    ))
+                    ), r.get("bracket_only", False))
                 )
             except re.error:
                 pass
@@ -217,7 +218,7 @@ class LogHighlighter(QSyntaxHighlighter):
         self._enabled = v
         self.rehighlight()
 
-    def load_config(self, config: dict):
+    def load_config(self, config: dict, rehighlight=True):
         hl = config.get("highlight", {})
         self._enabled = hl.get("enabled", True)
         self._base_fg = hl.get("default_fg", "#1e293b")
@@ -236,7 +237,8 @@ class LogHighlighter(QSyntaxHighlighter):
                     r["pattern"], flags
                 )
                 self._builtin.append(
-                    (rx, self._make_fmt(fg, bg))
+                    (rx, self._make_fmt(fg, bg),
+                     r.get("bracket_only", False))
                 )
             except re.error:
                 pass
@@ -266,7 +268,8 @@ class LogHighlighter(QSyntaxHighlighter):
                 )
             except re.error:
                 pass
-        self.rehighlight()
+        if rehighlight:
+            self.rehighlight()
 
     def highlightBlock(self, text: str):
         if not self._enabled:
@@ -276,13 +279,17 @@ class LogHighlighter(QSyntaxHighlighter):
         base = QTextCharFormat()
         base.setForeground(QColor(self._base_fg))
         self.setFormat(0, len(text), base)
-        for rx, fmt in self._builtin:
+        for rx, fmt, bonly in self._builtin:
             for m in rx.finditer(text):
-                self.setFormat(
-                    m.start(),
-                    m.end() - m.start(),
-                    fmt,
-                )
+                if bonly:
+                    self.setFormat(m.start(), 1, fmt)
+                    self.setFormat(m.end() - 1, 1, fmt)
+                else:
+                    self.setFormat(
+                        m.start(),
+                        m.end() - m.start(),
+                        fmt,
+                    )
         for rx, fmt in self._user:
             for m in rx.finditer(text):
                 self.setFormat(

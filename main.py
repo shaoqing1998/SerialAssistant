@@ -463,10 +463,19 @@ class MainWindow(FramelessMainWindow):
             tb.layout().addWidget(self._btn_settings)
 
     def _build_ui(self):
-        self.resize(
-            self._cfg["ui"]["window_width"],
-            self._cfg["ui"]["window_height"],
-        )
+        w = self._cfg["ui"]["window_width"]
+        h = self._cfg["ui"]["window_height"]
+        if w <= 0 or h <= 0:
+            # ★ v0.6: 首次启动自适应屏幕 — 85% 可用区域
+            from PySide6.QtGui import QGuiApplication
+            screen = QGuiApplication.primaryScreen()
+            if screen:
+                geo = screen.availableGeometry()
+                w = int(geo.width() * 0.85)
+                h = int(geo.height() * 0.85)
+            else:
+                w, h = 1100, 650
+        self.resize(max(w, 900), max(h, 520))
         self.setMinimumSize(900, 520)
         root = QWidget()
         root.setObjectName("AppRoot")
@@ -805,9 +814,17 @@ class MainWindow(FramelessMainWindow):
                 self._cfg
             )
         )
+        # ★ v0.6 fix: 字号变化走专用通路，不触发 rehighlight
+        dlg.font_size_changed.connect(
+            lambda sz: self._filter_mgr.update_font_size(sz)
+        )
+        # ★ v0.6: 自动换行走专用通路
+        dlg.word_wrap_changed.connect(
+            lambda on: self._filter_mgr.update_word_wrap(on)
+        )
         dlg.exec()
-        # ★ v0.5: 设置关闭后最终刷新一次
-        self._filter_mgr.refresh_highlighter(self._cfg)
+        # ★ v0.6: 设置关闭后只更新配置，不 rehighlight 已有日志
+        self._filter_mgr.update_highlighter_config(self._cfg)
         # ★ fix: 设置关闭后同步日志录制状态
         log_on = self._cfg.get("logging", {}).get(
             "enabled", False
