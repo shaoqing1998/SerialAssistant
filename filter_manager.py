@@ -1,7 +1,9 @@
 """
 filter_manager.py - 多 Tab 关键词过滤管理模块
-v0.5 — ★ FilteredLogView 绑定 LogHighlighter 高亮引擎
-★ FilterManager.refresh_highlighter 刷新所有 Tab 高亮
+v0.6 — ★ 日志区默认字号 12pt + Ctrl+滚轮/箭头调字号
+       ★ 右下角字号提示浮层（2秒后淡出）
+       ★ FilteredLogView 绑定 LogHighlighter 高亮引擎
+       ★ FilterManager.refresh_highlighter 刷新所有 Tab 高亮
 """
 from __future__ import annotations
 from typing import Callable
@@ -10,8 +12,12 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabBar,
     QTabWidget, QPushButton,
     QCheckBox, QInputDialog,
+    QLabel, QGraphicsOpacityEffect,
 )
-from PySide6.QtCore import Qt, Signal, QRect, QPoint
+from PySide6.QtCore import (
+    Qt, Signal, QRect, QPoint,
+    QTimer, QPropertyAnimation, QEasingCurve,
+)
 from PySide6.QtGui import (
     QFont, QColor, QTextCharFormat, QTextCursor,
     QPainter, QPen,
@@ -27,6 +33,8 @@ from highlight_engine import LogHighlighter
 # 单个过滤 Tab 的日志视图
 # ════════════════════════════════════════════
 class FilteredLogView(RoundedContextTextEdit):
+    font_size_changed = Signal(int)  # ★ v0.6 fix: 通知字号变化
+
     def __init__(self, keywords=None, case_sensitive=False,
                  invert=False, parent=None):
         super().__init__(parent)
@@ -40,7 +48,7 @@ class FilteredLogView(RoundedContextTextEdit):
         self.setLineWrapMode(
             RoundedContextTextEdit.LineWrapMode.NoWrap
         )
-        font = QFont("Consolas", 11)
+        font = QFont("Consolas", 12)
         font.setStyleHint(QFont.StyleHint.Monospace)
         self.setFont(font)
         self.setStyleSheet(
@@ -49,6 +57,42 @@ class FilteredLogView(RoundedContextTextEdit):
             "color: #1e293b; padding: 2px; }"
         )
         self._highlighter = None  # ★ v0.5
+
+        # ★ v0.6: 字号调节 + 右下角提示浮层
+        self._font_size = 12
+        self._size_tip = QLabel(self)
+        self._size_tip.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        self._size_tip.setStyleSheet(
+            "QLabel{background:rgba(0,0,0,0.55);color:#fff;"
+            "font-size:13px;font-family:Consolas,monospace;"
+            "border-radius:6px;padding:3px 10px}"
+        )
+        self._size_tip.setFixedHeight(26)
+        self._size_tip.hide()
+        self._tip_opacity = QGraphicsOpacityEffect(
+            self._size_tip
+        )
+        self._size_tip.setGraphicsEffect(self._tip_opacity)
+        self._tip_opacity.setOpacity(1.0)
+        self._tip_fade = QPropertyAnimation(
+            self._tip_opacity, b"opacity"
+        )
+        self._tip_fade.setDuration(400)
+        self._tip_fade.setStartValue(1.0)
+        self._tip_fade.setEndValue(0.0)
+        self._tip_fade.setEasingCurve(
+            QEasingCurve.Type.OutCubic
+        )
+        self._tip_fade.finished.connect(
+            self._size_tip.hide
+        )
+        self._tip_timer = QTimer(self)
+        self._tip_timer.setSingleShot(True)
+        self._tip_timer.timeout.connect(
+            self._tip_fade.start
+        )
 
     def set_auto_scroll(self, v):
         self._auto_scroll = v
@@ -102,6 +146,58 @@ class FilteredLogView(RoundedContextTextEdit):
         return "\n".join(lines) + "\n"
 
 
+    # ★ v0.6: 字号调节
+    def _change_font_size(self, delta):
+        new = max(8, min(30, self._font_size + delta))
+        if new == self._font_size:
+            return
+        self._font_size = new
+        font = self.font()
+        font.setPointSize(new)
+        self.setFont(font)
+        self._show_size_tip()
+        self.font_size_changed.emit(new)
+
+    def _show_size_tip(self):
+        self._tip_fade.stop()
+        self._tip_opacity.setOpacity(1.0)
+        self._size_tip.setText(f"{self._font_size}pt")
+        self._size_tip.adjustSize()
+        x = self.width() - self._size_tip.width() - 8
+        y = self.height() - self._size_tip.height() - 8
+        self._size_tip.move(x, y)
+        self._size_tip.show()
+        self._tip_timer.start(2000)
+
+    def wheelEvent(self, event):
+        if (event.modifiers()
+                & Qt.KeyboardModifier.ControlModifier):
+            delta = 1 if event.angleDelta().y() > 0 else -1
+            self._change_font_size(delta)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def keyPressEvent(self, event):
+        if (event.modifiers()
+                & Qt.KeyboardModifier.ControlModifier):
+            if event.key() == Qt.Key.Key_Up:
+                self._change_font_size(1)
+                event.accept()
+                return
+            elif event.key() == Qt.Key.Key_Down:
+                self._change_font_size(-1)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._size_tip.isVisible():
+            x = self.width() - self._size_tip.width() - 8
+            y = self.height() - self._size_tip.height() - 8
+            self._size_tip.move(x, y)
+
     # ★ v0.5 新增：高亮器绑定
     def set_highlighter(self, config: dict | None):
         """绑定/更新 LogHighlighter 到本视图的 document"""
@@ -109,6 +205,15 @@ class FilteredLogView(RoundedContextTextEdit):
             self._highlighter = LogHighlighter(self.document())
         if config:
             self._highlighter.load_config(config)
+            # ★ v0.6: 同步设置页字号
+            fs = config.get("highlight", {}).get(
+                "font_size", 12
+            )
+            if fs != self._font_size:
+                self._font_size = fs
+                font = self.font()
+                font.setPointSize(fs)
+                self.setFont(font)
         else:
             self._highlighter.set_enabled(False)
 
@@ -263,6 +368,9 @@ class FilterManager(QWidget):
         layout.addWidget(self._build_filter_bar())
         main_view = FilteredLogView()
         main_view.set_auto_scroll(self._auto_scroll)
+        main_view.font_size_changed.connect(
+            self._on_font_size_changed
+        )
         self._tabs.addTab(main_view, "main")
         for i in range(1, 2):
             self._add_tab(f"filter-{i:02d}", closable=True)
@@ -328,6 +436,9 @@ class FilterManager(QWidget):
     def _add_tab(self, name, closable=True):
         view = FilteredLogView()
         view.set_auto_scroll(self._auto_scroll)
+        view.font_size_changed.connect(
+            self._on_font_size_changed
+        )
         plus_idx = self._find_plus_idx()
         if plus_idx >= 0:
             self._tabs.insertTab(plus_idx, view, name)
@@ -521,6 +632,23 @@ class FilterManager(QWidget):
             v = self._tabs.widget(i)
             if isinstance(v, FilteredLogView):
                 v.set_highlighter(config)
+
+    # ★ v0.6 fix: 滚轮调字号 → 写入 config + 同步所有 Tab
+    def _on_font_size_changed(self, size):
+        hl = self._config.setdefault("highlight", {})
+        hl["font_size"] = size
+        from config import save_config
+        save_config(self._config)
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if (
+                isinstance(v, FilteredLogView)
+                and v._font_size != size
+            ):
+                v._font_size = size
+                font = v.font()
+                font.setPointSize(size)
+                v.setFont(font)
 
     # ── 核心分发 ──────────────────────────
 

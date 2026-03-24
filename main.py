@@ -1,9 +1,10 @@
 """
-main.py - 串口调试助手 v0.5
+main.py - 串口调试助手 v0.6
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
 ★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
 ★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
 ★ v0.5: 设置变更 → 刷新高亮
+★ v0.6: closeEvent 先关闭所有打开的 QDialog
 """
 import sys
 import os
@@ -23,8 +24,12 @@ from PySide6.QtWidgets import (
     QCheckBox, QSizePolicy,
     QMessageBox, QSpinBox, QStyledItemDelegate,
     QInputDialog, QFileDialog,
+    QDialog,
 )
-from PySide6.QtCore import Qt, QTimer, QEvent, QPoint
+from PySide6.QtCore import (
+    Qt, QTimer, QEvent, QPoint,
+    QAbstractNativeEventFilter,
+)
 from PySide6.QtGui import QFont, QMouseEvent, QColor, QCursor
 
 from qframelesswindow import FramelessMainWindow
@@ -342,6 +347,48 @@ QScrollBar::add-line, QScrollBar::sub-line {
 """
 
 
+class _WinCloseFilter(QAbstractNativeEventFilter):
+    """应用级 WM_CLOSE 拦截 — 模态对话框 exec 中也生效"""
+
+    def __init__(self, window):
+        super().__init__()
+        self._window = window
+        self._closing = False
+
+    def _do_close(self):
+        """关闭所有可见 Dialog + 主窗口"""
+        app = QApplication.instance()
+        for w in app.topLevelWidgets():
+            if (
+                isinstance(w, QDialog)
+                and w.isVisible()
+            ):
+                w.done(0)
+        self._window.close()
+
+    def nativeEventFilter(self, eventType, message):
+        if self._closing:
+            return True, 0          # 阻断后续 WM_CLOSE
+        if eventType == b"windows_generic_MSG":
+            try:
+                msg = ctypes.wintypes.MSG.from_address(
+                    int(message)
+                )
+                if msg.message == 0x0010:   # WM_CLOSE
+                    # ★ 不检查 HWND — qframelesswindow
+                    #   的 winId() 可能与 Windows 实际
+                    #   发送目标不一致，全部拦截最可靠
+                    self._closing = True
+                    QTimer.singleShot(
+                        0,
+                        self._do_close,
+                    )
+                    return True, 0
+            except Exception:
+                pass
+        return False, 0
+
+
 class MainWindow(FramelessMainWindow):
     BAUDRATES = [
         "1200", "2400", "4800", "9600", "14400",
@@ -374,10 +421,15 @@ class MainWindow(FramelessMainWindow):
         # ★ v0.5: 初始加载高亮配置
         self._filter_mgr.refresh_highlighter(self._cfg)
         self._center_on_screen()
+        # ★ v0.6: 应用级 WM_CLOSE 拦截（模态对话框中也生效）
+        self._close_filter = _WinCloseFilter(self)
+        QApplication.instance().installNativeEventFilter(
+            self._close_filter
+        )
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.5")
+        self.setWindowTitle("串口调试助手  v0.6")
         tb = self.titleBar
         tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)
@@ -1193,6 +1245,10 @@ class MainWindow(FramelessMainWindow):
         return f"{n/1048576:.2f} MB"
 
     def closeEvent(self, event):
+        # ★ v0.6: 先关闭所有打开的模态对话框
+        for child in self.findChildren(QDialog):
+            if child.isVisible():
+                child.close()
         self._port_timer.stop()
         self._stat_timer.stop()
         if self._loop_timer.isActive():
