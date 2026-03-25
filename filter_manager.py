@@ -44,6 +44,16 @@ class FilteredLogView(RoundedContextTextEdit):
         self._auto_scroll = True
         self._line_count = 0
         self._max_lines = 5000
+        # ★ v0.6: resize 防抖
+        self._wrap_mode = (
+            RoundedContextTextEdit.LineWrapMode.NoWrap
+        )
+        self._resize_debounce = QTimer(self)
+        self._resize_debounce.setSingleShot(True)
+        self._resize_debounce.setInterval(300)
+        self._resize_debounce.timeout.connect(
+            self._restore_wrap
+        )
         self.setReadOnly(True)
         self.setLineWrapMode(
             RoundedContextTextEdit.LineWrapMode.NoWrap
@@ -89,9 +99,38 @@ class FilteredLogView(RoundedContextTextEdit):
         self._tip_timer.timeout.connect(
             self._tip_fade.start
         )
+        # ★ NoWrap 模式：文档宽度跟随内容，消除右侧空白
+        self._adjusting_width = False
+        self.document().documentLayout().documentSizeChanged.connect(
+            self._on_doc_size_changed
+        )
+        # ★ auto-scroll 智能管理 + 底部回滚按钮
+        self._programmatic_scroll = False
+        self._scroll_bottom_btn = QPushButton("▼", self)
+        self._scroll_bottom_btn.setFixedSize(36, 36)
+        self._scroll_bottom_btn.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self._scroll_bottom_btn.setStyleSheet(
+            "QPushButton{background:rgba(30,30,30,0.7);"
+            "color:#fff;font-size:16px;border:none;"
+            "border-radius:18px}"
+            "QPushButton:hover{background:rgba(30,30,30,0.85)}"
+            "QPushButton:pressed{background:rgba(30,30,30,0.95)}"
+        )
+        self._scroll_bottom_btn.clicked.connect(
+            self._scroll_to_bottom
+        )
+        self._scroll_bottom_btn.hide()
+        self.verticalScrollBar().valueChanged.connect(
+            self._on_vscroll_changed
+        )
+
 
     def set_auto_scroll(self, v):
         self._auto_scroll = v
+        if v:
+            self._scroll_to_bottom()
 
     def matches(self, line):
         if not self.keywords:
@@ -104,6 +143,11 @@ class FilteredLogView(RoundedContextTextEdit):
         return (not hit) if self.invert else hit
 
     def append_line(self, line, color="#1e293b"):
+        # ★ 保存滚动位置（insertText + setTextWidth 都可能重置）
+        hbar = self.horizontalScrollBar()
+        vbar = self.verticalScrollBar()
+        h_val = hbar.value()
+        v_val = vbar.value()
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = QTextCharFormat()
@@ -113,9 +157,14 @@ class FilteredLogView(RoundedContextTextEdit):
         self._line_count += line.count('\n')
         if self._line_count > self._max_lines:
             self._trim()
+        # ★ 恢复滚动位置
+        self._programmatic_scroll = True
         if self._auto_scroll:
-            self.setTextCursor(cursor)
-            self.ensureCursorVisible()
+            vbar.setValue(vbar.maximum())
+        else:
+            vbar.setValue(v_val)
+        hbar.setValue(h_val)
+        self._programmatic_scroll = False
 
     def _trim(self):
         n = self._max_lines // 4
@@ -180,11 +229,79 @@ class FilteredLogView(RoundedContextTextEdit):
         self._size_tip.show()
         self._tip_timer.start(2000)
 
+    # ★ auto-scroll 智能管理
+    def _on_vscroll_changed(self, value):
+        if self._programmatic_scroll:
+            return
+        vbar = self.verticalScrollBar()
+        at_bottom = value >= vbar.maximum() - 5
+        if at_bottom and not self._auto_scroll:
+            self._auto_scroll = True
+            self._scroll_bottom_btn.hide()
+        elif not at_bottom and self._auto_scroll:
+            self._auto_scroll = False
+            self._scroll_bottom_btn.show()
+            self._update_scroll_btn_pos()
+
+    def _scroll_to_bottom(self):
+        self._auto_scroll = True
+        self._scroll_bottom_btn.hide()
+        self._programmatic_scroll = True
+        vbar = self.verticalScrollBar()
+        vbar.setValue(vbar.maximum())
+        self._programmatic_scroll = False
+
+    def _update_scroll_btn_pos(self):
+        vp = self.viewport()
+        x = vp.x() + (vp.width() - self._scroll_bottom_btn.width()) // 2
+        y = vp.y() + vp.height() - self._scroll_bottom_btn.height() - 12
+        self._scroll_bottom_btn.move(x, y)
+        self._scroll_bottom_btn.raise_()
+
+    # ★ NoWrap 文档宽度自适应 — 消除多余空白
+    def _on_doc_size_changed(self, size):
+        if self._adjusting_width:
+            return
+        if self._resize_frozen:
+            return
+        if self._wrap_mode != self.LineWrapMode.NoWrap:
+            return
+        self._adjust_doc_width()
+
+    def _adjust_doc_width(self):
+        """NoWrap: 文档宽度 = max(内容宽度, 视口宽度)"""
+        doc = self.document()
+        self._adjusting_width = True
+        ideal = doc.idealWidth()
+        vp_w = self.viewport().width()
+        new_w = max(ideal, vp_w)
+        if abs(doc.textWidth() - new_w) > 1:
+            # ★ setTextWidth 触发文档重排，会重置滚动条
+            hbar = self.horizontalScrollBar()
+            vbar = self.verticalScrollBar()
+            h_val = hbar.value()
+            v_val = vbar.value()
+            doc.setTextWidth(new_w)
+            hbar.setValue(h_val)
+            vbar.setValue(v_val)
+        self._adjusting_width = False
+
     def wheelEvent(self, event):
         if (event.modifiers()
                 & Qt.KeyboardModifier.ControlModifier):
             delta = 1 if event.angleDelta().y() > 0 else -1
             self._change_font_size(delta)
+            event.accept()
+            return
+        # ★ Shift+滚轮 → 水平滚动
+        if (event.modifiers()
+                & Qt.KeyboardModifier.ShiftModifier):
+            bar = self.horizontalScrollBar()
+            dy = event.angleDelta().y()
+            if dy:
+                bar.setValue(
+                    bar.value() - dy
+                )
             event.accept()
             return
         super().wheelEvent(event)
@@ -202,12 +319,41 @@ class FilteredLogView(RoundedContextTextEdit):
                 return
         super().keyPressEvent(event)
 
+    # ★ v0.6: resize 冻结 — 拖动窗口期间跳过布局重排
+    _resize_frozen = False
+
+    def set_resize_frozen(self, frozen):
+        self._resize_frozen = frozen
+        vp = self.viewport()
+        if frozen:
+            # ★ 锁定 viewport 尺寸 → QTextDocument 不重排
+            vp.setFixedSize(vp.size())
+        else:
+            # ★ 解锁 viewport
+            vp.setMinimumSize(0, 0)
+            vp.setMaximumSize(16777215, 16777215)
+
     def resizeEvent(self, event):
+        if self._resize_frozen:
+            QWidget.resizeEvent(self, event)
+            return
         super().resizeEvent(event)
+        # ★ NoWrap: viewport 变化时同步文档宽度
+        if self._wrap_mode == self.LineWrapMode.NoWrap:
+            self._adjust_doc_width()
         if self._size_tip.isVisible():
             x = self.width() - self._size_tip.width() - 8
             y = self.height() - self._size_tip.height() - 8
             self._size_tip.move(x, y)
+        if self._scroll_bottom_btn.isVisible():
+            self._update_scroll_btn_pos()
+
+    def _restore_wrap(self):
+        """resize 结束后恢复自动换行"""
+        if self._wrap_mode == (
+            RoundedContextTextEdit.LineWrapMode.WidgetWidth
+        ):
+            self.setLineWrapMode(self._wrap_mode)
 
     # ★ v0.5 新增：高亮器绑定
     def set_highlighter(self, config: dict | None):
@@ -231,7 +377,12 @@ class FilteredLogView(RoundedContextTextEdit):
                 if wrap
                 else RoundedContextTextEdit.LineWrapMode.NoWrap
             )
+            self._wrap_mode = wrap_mode
             self.setLineWrapMode(wrap_mode)
+            # ★ v0.6: 同步最大行数
+            self._max_lines = config.get(
+                "highlight", {}
+            ).get("max_lines", 5000)
         else:
             self._highlighter.set_enabled(False)
 
@@ -254,7 +405,12 @@ class FilteredLogView(RoundedContextTextEdit):
                 if wrap
                 else RoundedContextTextEdit.LineWrapMode.NoWrap
             )
+            self._wrap_mode = wrap_mode
             self.setLineWrapMode(wrap_mode)
+            # ★ v0.6: 同步最大行数
+            self._max_lines = config.get(
+                "highlight", {}
+            ).get("max_lines", 5000)
         else:
             self._highlighter.set_enabled(False)
 
@@ -362,6 +518,9 @@ class FilterManager(QWidget):
         self._log_write_cb = None
         self._log_close_cb = None
         self._save_as_cb = None
+        # ★ v0.6: 写入暂停机制 — 换行切换/resize 期间攒数据
+        self._write_paused = False
+        self._pending_lines = []
         self._init_ui()
 
     # ── 回调设置 ─────────────────────────
@@ -697,13 +856,14 @@ class FilterManager(QWidget):
             ):
                 v._apply_font_size(size)
 
-    # ★ v0.6: 自动换行开关
+    # ★ v0.6: 自动换行开关（暂停写入 → 切换 → 恢复 flush）
     def update_word_wrap(self, enabled):
         """设置页调用 — 切换所有 Tab 换行模式"""
         hl = self._config.setdefault("highlight", {})
         hl["word_wrap"] = enabled
         from config import save_config
         save_config(self._config)
+        self._write_paused = True
         mode = (
             FilteredLogView.LineWrapMode.WidgetWidth
             if enabled
@@ -712,14 +872,56 @@ class FilterManager(QWidget):
         for i in range(self._tabs.count()):
             v = self._tabs.widget(i)
             if isinstance(v, FilteredLogView):
+                v._wrap_mode = mode
                 v.setLineWrapMode(mode)
+        self._write_paused = False
+        self._flush_pending()
+
+    # ★ v0.6: 最大行数更新
+    def update_max_lines(self, n):
+        """设置页调用 — 更新所有 Tab 最大行数"""
+        hl = self._config.setdefault("highlight", {})
+        hl["max_lines"] = n
+        from config import save_config
+        save_config(self._config)
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                v._max_lines = n
 
     def _on_font_size_changed(self, size):
         self.update_font_size(size)
 
     # ── 核心分发 ──────────────────────────
 
+    # ★ v0.6: 写入暂停 — resize/换行切换期间缓冲数据
+    def set_write_paused(self, paused):
+        self._write_paused = paused
+        if not paused:
+            self._flush_pending()
+
+    def _flush_pending(self):
+        if not self._pending_lines:
+            return
+        pending = self._pending_lines
+        self._pending_lines = []
+        # ★ 批量编辑块 — 合并所有插入为一次布局更新
+        edit_cursors = []
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                c = v.textCursor()
+                c.beginEditBlock()
+                edit_cursors.append((v, c))
+        for text, color in pending:
+            self._dispatch(text, color)
+        for v, c in edit_cursors:
+            c.endEditBlock()
+
     def _dispatch(self, text, color):
+        if self._write_paused:
+            self._pending_lines.append((text, color))
+            return
         combined = self._line_buffer + text
         lines = combined.split('\n')
         self._line_buffer = lines[-1]

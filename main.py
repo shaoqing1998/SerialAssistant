@@ -35,7 +35,7 @@ from PySide6.QtGui import QFont, QMouseEvent, QColor, QCursor
 from qframelesswindow import FramelessMainWindow
 from config import load_config, save_config
 from serial_manager import SerialManager
-from filter_manager import FilterManager
+from filter_manager import FilterManager, FilteredLogView
 from rounded_menu import RoundedMenu, RoundedContextTextEdit
 from title_bar import (
     SettingsButton,
@@ -384,6 +384,13 @@ class _WinCloseFilter(QAbstractNativeEventFilter):
                         self._do_close,
                     )
                     return True, 0
+                # ★ v0.6: resize 预冻结
+                elif msg.message == 0x0231:
+                    # WM_ENTERSIZEMOVE
+                    self._window._freeze_for_resize()
+                elif msg.message == 0x0232:
+                    # WM_EXITSIZEMOVE — 松手瞬间解冻
+                    self._window._unfreeze_after_resize()
             except Exception:
                 pass
         return False, 0
@@ -416,6 +423,7 @@ class MainWindow(FramelessMainWindow):
         self._stat_timer = QTimer(self)
         self._stat_timer.timeout.connect(self._refresh_stat)
         self._stat_timer.start(1000)
+
         self._scan_ports()
         self._wire()
         # ★ v0.5: 初始加载高亮配置
@@ -725,6 +733,50 @@ class MainWindow(FramelessMainWindow):
         ):
             sb.addPermanentWidget(w)
 
+    # ── ★ v0.6: 窗口拖动期间冻结日志视图布局 ──
+    def _freeze_for_resize(self):
+        """WM_ENTERSIZEMOVE 预冻结 — 仅换行模式锁 viewport"""
+        # 不开换行时无需冻结（NoWrap 布局开销极低）
+        has_wrap = any(
+            isinstance(self._filter_mgr._tabs.widget(i), FilteredLogView)
+            and self._filter_mgr._tabs.widget(i)._wrap_mode
+                == FilteredLogView.LineWrapMode.WidgetWidth
+            for i in range(self._filter_mgr._tabs.count())
+        )
+        if not has_wrap:
+            return
+        self._filter_mgr.set_write_paused(True)
+        for i in range(self._filter_mgr._tabs.count()):
+            v = self._filter_mgr._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                v.set_resize_frozen(True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+    def _unfreeze_after_resize(self):
+        """WM_EXITSIZEMOVE — 松手瞬间立即解冻"""
+        self._do_unfreeze()
+
+    def _do_unfreeze(self):
+        """flush 缓冲 + 解冻被锁视图（幂等安全）"""
+        if not self._filter_mgr._write_paused:
+            return   # 已解冻过，跳过
+        # Phase 1: flush 缓冲（viewport 锁着零重排开销）
+        self._filter_mgr.set_write_paused(False)
+        # Phase 2: 只解冻实际被锁的视图
+        for i in range(self._filter_mgr._tabs.count()):
+            v = self._filter_mgr._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                if v._resize_frozen:
+                    v.set_resize_frozen(False)
+                    from PySide6.QtCore import QSize
+                    from PySide6.QtGui import QResizeEvent
+                    v.resizeEvent(
+                        QResizeEvent(v.size(), QSize())
+                    )
+
+
     # ── ★ v0.44: 首次显示匹配设置按钮尺寸 ──
     def showEvent(self, event):
         super().showEvent(event)
@@ -821,6 +873,10 @@ class MainWindow(FramelessMainWindow):
         # ★ v0.6: 自动换行走专用通路
         dlg.word_wrap_changed.connect(
             lambda on: self._filter_mgr.update_word_wrap(on)
+        )
+        # ★ v0.6: 最大行数走专用通路
+        dlg.max_lines_changed.connect(
+            lambda n: self._filter_mgr.update_max_lines(n)
         )
         dlg.exec()
         # ★ v0.6: 设置关闭后只更新配置，不 rehighlight 已有日志

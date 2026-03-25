@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QPushButton, QFileDialog, QWidget,
     QRadioButton, QScrollArea, QFrame, QStackedWidget,
     QButtonGroup, QLineEdit, QTextEdit, QMenu,
-    QApplication, QScrollBar,
+    QApplication, QScrollBar, QSpinBox,
 )
 from PySide6.QtCore import (
     Qt, QPoint, QPointF, QRectF, Signal, QEvent,
@@ -1231,6 +1231,7 @@ class SettingsDialog(QDialog):
     highlight_changed = Signal()
     font_size_changed = Signal(int)  # ★ v0.6 fix: 字号专用信号，不触发 rehighlight
     word_wrap_changed = Signal(bool)   # ★ v0.6: 自动换行开关
+    max_lines_changed = Signal(int)    # ★ v0.6: 行数上限变更
 
     def __init__(self, config, tab_names, parent=None):
         super().__init__(parent)
@@ -1706,6 +1707,45 @@ class SettingsDialog(QDialog):
         )
         _hlc_v.addWidget(self._chk_wrap)
 
+        # ★ 行数上限
+        ml_h = QHBoxLayout()
+        ml_h.setSpacing(6)
+        lbl_ml = QLabel("行数上限")
+        lbl_ml.setStyleSheet(
+            "font-size:12px;color:#6b7280;"
+            "background:transparent;"
+        )
+        ml_h.addWidget(lbl_ml)
+        self._max_lines_spin = QSpinBox()
+        self._max_lines_spin.setObjectName("max_lines_spin")
+        self._max_lines_spin.setRange(500, 100000)
+        self._max_lines_spin.setSingleStep(500)
+        self._max_lines_spin.setValue(
+            _hl_cfg.get("max_lines", 5000)
+        )
+        self._max_lines_spin.setFixedWidth(80)
+        self._max_lines_spin.setStyleSheet(
+            "QSpinBox#max_lines_spin{"
+            "font-size:11px;color:#374151;"
+            "background:#fff;border:1.5px solid #d1d5db;"
+            "border-radius:3px;padding:0 2px;"
+            "min-height:18px;max-height:18px}"
+            "QSpinBox#max_lines_spin:focus{"
+            "border-color:#3b82f6}"
+        )
+        self._max_lines_spin.valueChanged.connect(
+            self._on_max_lines_changed
+        )
+        ml_h.addWidget(self._max_lines_spin)
+        lbl_ml_warn = QLabel("（不建议超过 10000）")
+        lbl_ml_warn.setStyleSheet(
+            "font-size:11px;color:#e67700;"
+            "background:transparent;"
+        )
+        ml_h.addWidget(lbl_ml_warn)
+        ml_h.addStretch(1)
+        _hlc_v.addLayout(ml_h)
+
         # ★ 启用高亮
         self._chk_hl_enabled = QCheckBox("启用关键词高亮")
         self._chk_hl_enabled.setStyleSheet(_CHK_SS)
@@ -2052,6 +2092,11 @@ class SettingsDialog(QDialog):
         self._auto_save()
         self.word_wrap_changed.emit(checked)
 
+    def _on_max_lines_changed(self, value):
+        """★ v0.6: 行数上限变更 — 不触发 rehighlight"""
+        self._auto_save()
+        self.max_lines_changed.emit(value)
+
     def _on_hl_changed(self, _=""):
         """★ 接受可选 str 参数（color_changed Signal(str) 会传值）"""
         self._build_hl_config()
@@ -2107,6 +2152,7 @@ class SettingsDialog(QDialog):
             "default_fg": self._default_fg_btn.color(),
             "font_size": self._fs_value(),
             "word_wrap": self._chk_wrap.isChecked(),
+            "max_lines": self._max_lines_spin.value(),
             "builtin_rules": {},
             "user_rules": [],
         }
@@ -2157,6 +2203,11 @@ class SettingsDialog(QDialog):
         )
         for ur in hl_cfg.get("user_rules", []):
             self._custom_list.add_rule(ur)
+        self._max_lines_spin.blockSignals(True)
+        self._max_lines_spin.setValue(
+            hl_cfg.get("max_lines", 5000)
+        )
+        self._max_lines_spin.blockSignals(False)
 
     def _write_to_config(self):
         if "logging" not in self._config:
@@ -2213,4 +2264,7 @@ class SettingsDialog(QDialog):
             for row in self._builtin_rows:
                 row.reset()
             self._custom_list.clear_all()
+            self._max_lines_spin.blockSignals(True)
+            self._max_lines_spin.setValue(5000)
+            self._max_lines_spin.blockSignals(False)
             self._on_hl_changed()
