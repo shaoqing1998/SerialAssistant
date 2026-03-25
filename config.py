@@ -22,6 +22,7 @@ _DEFAULT_CONFIG = {
         "font_family": "Consolas",
         "font_size": 10,
         "max_log_lines": 5000,
+        "confirm_clear": True,
     },
     "send": {
         "hex_mode": False,

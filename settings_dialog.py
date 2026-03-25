@@ -36,7 +36,9 @@ v0.5 — ★ 新增「字体」设置页（预览行 + 内置规则 + 自定义�
   [24] _build_highlight_page: 分隔线上下各加 addSpacing(6) 增加留白
   [25] PANEL_W 520→50，_hl_body 左右各缩进 10px，分隔线全宽、容器居中略窄，视觉对称
   [26] 分隔线上下 addSpacing 6→12 统一边距，setFixedHeight 1→2（≈1.5px）统一厚度
-  [27] 行数上限 QSpinBox: setRange 500→0 起始，setSpecialValueText("无限制")，0=不限制
+  [27] 行数上限改为 checkbox 无限制 + spinbox 联动（替代 specialValueText 方案）
+  [28] 新增 InfoPopup / ConfirmPopup 自定义弹窗（无标题栏/无图标/居中按钮）
+  [29] 设置新增「其他」页，含清空确认提示开关
 """
 from __future__ import annotations
 
@@ -69,6 +71,7 @@ RADIUS = 10
 BORDER_COLOR = QColor("#b0b8c4")
 BG_COLOR = QColor("#ffffff")
 OVERLAY_COLOR = QColor(0, 0, 0, 80)
+_POPUP_FONT_SIZE = 16  # 弹窗消息统一字号
 
 _CHK_SS = (
     "QCheckBox { font-size: 13px; background: transparent;"
@@ -1046,6 +1049,224 @@ class _CustomRuleList(QWidget):
     def clear_selection(self):
         for r in self._rows:
             r.set_selected(False)
+
+
+# ═══════════════════════════════════════════
+# ★ v0.61 新增：自定义弹窗（替代 QMessageBox）
+# ═══════════════════════════════════════════
+class InfoPopup(QDialog):
+    """无标题栏、无图标的信息提示弹窗 — 确定按钮底部居中"""
+
+    def __init__(self, message, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            True,
+        )
+        self._pw = 280
+        self._panel = QWidget(self)
+        v = QVBoxLayout(self._panel)
+        v.setContentsMargins(20, 20, 20, 16)
+        v.setSpacing(16)
+        lbl = QLabel(message)
+        lbl.setWordWrap(True)
+        lbl.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        lbl.setStyleSheet(
+            f"font-size:{_POPUP_FONT_SIZE}px;color:#374151;"
+            "background:transparent;"
+        )
+        v.addWidget(lbl)
+        btn_ok = QPushButton("确定")
+        btn_ok.setFixedSize(72, 30)
+        btn_ok.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_ok.setStyleSheet(
+            "QPushButton{background:#2563eb;"
+            "border:none;border-radius:6px;"
+            "color:#fff;font-size:13px;"
+            "font-weight:600}"
+            "QPushButton:hover{background:#3b82f6}"
+            "QPushButton:pressed{background:#1d4ed8}"
+        )
+        btn_ok.clicked.connect(self.accept)
+        btn_h = QHBoxLayout()
+        btn_h.addStretch(1)
+        btn_h.addWidget(btn_ok)
+        btn_h.addStretch(1)
+        v.addLayout(btn_h)
+        self._panel.setFixedWidth(self._pw)
+        self._panel.adjustSize()
+        self._ph = self._panel.sizeHint().height()
+        self._panel.setFixedHeight(self._ph)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            pw = self.parent()
+            self.resize(pw.size())
+            self.move(pw.mapToGlobal(QPoint(0, 0)))
+        self._panel.move(
+            (self.width() - self._pw) // 2,
+            (self.height() - self._ph) // 2,
+        )
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(
+            QPainter.RenderHint.Antialiasing, True
+        )
+        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
+        pr = QRectF(
+            self._panel.geometry()
+        ).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(pr, 8, 8)
+        p.fillPath(path, QColor("#ffffff"))
+        p.setPen(QPen(QColor("#d1d5db"), 1.0))
+        p.drawPath(path)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if not self._panel.geometry().contains(
+            event.pos()
+        ):
+            self.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class ConfirmPopup(QDialog):
+    """确认弹窗 — 可选"以后都不提示"复选框"""
+
+    def __init__(self, message, show_dont_ask=False,
+                 parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            True,
+        )
+        self._dont_ask = False
+        self._pw = 300
+        self._panel = QWidget(self)
+        v = QVBoxLayout(self._panel)
+        v.setContentsMargins(20, 20, 20, 16)
+        v.setSpacing(12)
+        lbl = QLabel(message)
+        lbl.setWordWrap(True)
+        lbl.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        lbl.setStyleSheet(
+            f"font-size:{_POPUP_FONT_SIZE}px;color:#374151;"
+            "background:transparent;"
+        )
+        v.addWidget(lbl)
+        self._chk_dont_ask = None
+        if show_dont_ask:
+            self._chk_dont_ask = QCheckBox(
+                "以后都不提示"
+            )
+            self._chk_dont_ask.setStyleSheet(_CHK_SS)
+            chk_h = QHBoxLayout()
+            chk_h.addStretch(1)
+            chk_h.addWidget(self._chk_dont_ask)
+            chk_h.addStretch(1)
+            v.addLayout(chk_h)
+        btn_h = QHBoxLayout()
+        btn_h.setSpacing(12)
+        btn_h.addStretch(1)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedSize(72, 30)
+        btn_cancel.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_cancel.setStyleSheet(
+            "QPushButton{background:#fff;"
+            "border:1px solid #d1d5db;"
+            "border-radius:6px;color:#374151;"
+            "font-size:13px}"
+            "QPushButton:hover{background:#f3f4f6;"
+            "border-color:#9ca3af}"
+            "QPushButton:pressed{background:#e5e7eb}"
+        )
+        btn_cancel.clicked.connect(self.reject)
+        btn_h.addWidget(btn_cancel)
+        btn_ok = QPushButton("确认")
+        btn_ok.setFixedSize(72, 30)
+        btn_ok.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_ok.setStyleSheet(
+            "QPushButton{background:#2563eb;"
+            "border:none;border-radius:6px;"
+            "color:#fff;font-size:13px;"
+            "font-weight:600}"
+            "QPushButton:hover{background:#3b82f6}"
+            "QPushButton:pressed{background:#1d4ed8}"
+        )
+        btn_ok.clicked.connect(self._on_accept)
+        btn_h.addWidget(btn_ok)
+        btn_h.addStretch(1)
+        v.addLayout(btn_h)
+        self._panel.setFixedWidth(self._pw)
+        self._panel.adjustSize()
+        self._ph = self._panel.sizeHint().height()
+        self._panel.setFixedHeight(self._ph)
+
+    def _on_accept(self):
+        if (self._chk_dont_ask
+                and self._chk_dont_ask.isChecked()):
+            self._dont_ask = True
+        self.accept()
+
+    def dont_ask_again(self):
+        return self._dont_ask
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            pw = self.parent()
+            self.resize(pw.size())
+            self.move(pw.mapToGlobal(QPoint(0, 0)))
+        self._panel.move(
+            (self.width() - self._pw) // 2,
+            (self.height() - self._ph) // 2,
+        )
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(
+            QPainter.RenderHint.Antialiasing, True
+        )
+        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
+        pr = QRectF(
+            self._panel.geometry()
+        ).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(pr, 8, 8)
+        p.fillPath(path, QColor("#ffffff"))
+        p.setPen(QPen(QColor("#d1d5db"), 1.0))
+        p.drawPath(path)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if not self._panel.geometry().contains(
+            event.pos()
+        ):
+            self.reject()
+            return
+        super().mousePressEvent(event)
 # ═══════════════════════════════════════════
 # ★ 带三角箭头的自定义滚动条
 # ═══════════════════════════════════════════
@@ -1322,12 +1543,16 @@ class SettingsDialog(QDialog):
         btn_hl = _NavBtn("字体")
         self._nav_group.addButton(btn_hl, 1)
         nav_v.addWidget(btn_hl)
+        btn_other = _NavBtn("其他")
+        self._nav_group.addButton(btn_other, 2)
+        nav_v.addWidget(btn_other)
         nav_v.addStretch(1)
         body_h.addWidget(nav_w)
 
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_log_page())
         self._stack.addWidget(self._build_highlight_page())
+        self._stack.addWidget(self._build_other_page())
         body_h.addWidget(self._stack, stretch=1)
         self._nav_group.idClicked.connect(self._on_nav)
         content_v.addLayout(body_h, stretch=1)
@@ -2053,6 +2278,27 @@ class SettingsDialog(QDialog):
         )
         return page
 
+    def _build_other_page(self):
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(10)
+        self._chk_confirm_clear = QCheckBox(
+            "清空日志时显示确认提示"
+        )
+        self._chk_confirm_clear.setStyleSheet(_CHK_SS)
+        self._chk_confirm_clear.setChecked(
+            self._config.get("ui", {}).get(
+                "confirm_clear", True
+            )
+        )
+        self._chk_confirm_clear.toggled.connect(
+            self._auto_save
+        )
+        v.addWidget(self._chk_confirm_clear)
+        v.addStretch(1)
+        return page
+
     def _on_nav(self, idx):
         self._stack.setCurrentIndex(idx)
         if idx == 1:
@@ -2257,6 +2503,14 @@ class SettingsDialog(QDialog):
             self._max_lines_spin.setValue(_ml)
         self._chk_unlimited.blockSignals(False)
         self._max_lines_spin.blockSignals(False)
+        # ★ 其他设置
+        self._chk_confirm_clear.blockSignals(True)
+        self._chk_confirm_clear.setChecked(
+            self._config.get("ui", {}).get(
+                "confirm_clear", True
+            )
+        )
+        self._chk_confirm_clear.blockSignals(False)
 
     def _write_to_config(self):
         if "logging" not in self._config:
@@ -2276,6 +2530,9 @@ class SettingsDialog(QDialog):
             for chk in self._tab_checks
             if chk.isChecked()
         ]
+        self._config.setdefault("ui", {})[
+            "confirm_clear"
+        ] = self._chk_confirm_clear.isChecked()
         self._config["highlight"] = (
             self._build_hl_config()
         )
@@ -2321,3 +2578,6 @@ class SettingsDialog(QDialog):
             self._max_lines_spin.setValue(5000)
             self._max_lines_spin.blockSignals(False)
             self._on_hl_changed()
+        elif idx == 2:
+            self._chk_confirm_clear.setChecked(True)
+            self._auto_save()

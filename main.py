@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QGridLayout,
     QComboBox, QPushButton, QLabel,
     QCheckBox, QSizePolicy,
-    QMessageBox, QSpinBox, QStyledItemDelegate,
+    QSpinBox, QStyledItemDelegate,
     QInputDialog, QFileDialog,
     QDialog,
 )
@@ -42,7 +42,9 @@ from title_bar import (
     customize_titlebar_buttons,
 )
 from log_manager import LogManager
-from settings_dialog import SettingsDialog
+from settings_dialog import (
+    SettingsDialog, InfoPopup, ConfirmPopup,
+)
 
 
 _M = 10
@@ -920,9 +922,9 @@ class MainWindow(FramelessMainWindow):
             tab_name
         )
         if not content:
-            QMessageBox.information(
-                self, "提示", "当前 Tab 没有内容"
-            )
+            InfoPopup(
+                "当前 Tab 没有内容", self
+            ).exec()
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -937,9 +939,9 @@ class MainWindow(FramelessMainWindow):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
             except Exception as e:
-                QMessageBox.critical(
-                    self, "保存失败", str(e)
-                )
+                InfoPopup(
+                    f"保存失败：{e}", self
+                ).exec()
 
     def _toggle_send_area(self):
         self._send_visible = not self._send_visible
@@ -956,9 +958,7 @@ class MainWindow(FramelessMainWindow):
         )
         self._btn_conn.clicked.connect(self._toggle_conn)
         self._btn_send.clicked.connect(self._do_send)
-        self._btn_clear.clicked.connect(
-            self._filter_mgr.clear_main_and_current
-        )
+        self._btn_clear.clicked.connect(self._on_clear)
         self._chk_hex_rx.toggled.connect(
             self._filter_mgr.set_show_hex
         )
@@ -988,12 +988,46 @@ class MainWindow(FramelessMainWindow):
     def _on_clear_context_menu(self, pos):
         menu = RoundedMenu(self.window())
         act = menu.addAction("清空所有")
-        act.triggered.connect(
-            self._filter_mgr.clear_all
-        )
+        act.triggered.connect(self._on_clear_all)
         menu.exec(
             self._btn_clear.mapToGlobal(pos)
         )
+
+    def _on_clear(self):
+        if self._cfg.get("ui", {}).get(
+            "confirm_clear", True
+        ):
+            dlg = ConfirmPopup(
+                "确定要清空当前日志吗？",
+                show_dont_ask=True,
+                parent=self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if dlg.dont_ask_again():
+                self._cfg.setdefault("ui", {})[
+                    "confirm_clear"
+                ] = False
+                save_config(self._cfg)
+        self._filter_mgr.clear_main_and_current()
+
+    def _on_clear_all(self):
+        if self._cfg.get("ui", {}).get(
+            "confirm_clear", True
+        ):
+            dlg = ConfirmPopup(
+                "确定要清空所有日志吗？",
+                show_dont_ask=True,
+                parent=self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if dlg.dont_ask_again():
+                self._cfg.setdefault("ui", {})[
+                    "confirm_clear"
+                ] = False
+                save_config(self._cfg)
+        self._filter_mgr.clear_all()
 
     def eventFilter(self, obj, event):
         if (
@@ -1067,10 +1101,10 @@ class MainWindow(FramelessMainWindow):
     def _do_connect(self):
         port = self._get_port()
         if not port:
-            QMessageBox.warning(
-                self, "提示",
-                "请先选择有效的串口端口！",
-            )
+            InfoPopup(
+                "请先选择有效的串口端口",
+                self,
+            ).exec()
             return
         ok, msg = self._serial.connect(
             port, int(self._cb_baud.currentText())
@@ -1079,9 +1113,9 @@ class MainWindow(FramelessMainWindow):
             self._filter_mgr.append_info(msg)
         else:
             self._filter_mgr.append_error(msg)
-            QMessageBox.critical(
-                self, "连接失败", msg
-            )
+            InfoPopup(
+                f"连接失败：{msg}", self
+            ).exec()
 
     def _do_disconnect(self):
         if self._loop_timer.isActive():
@@ -1220,10 +1254,9 @@ class MainWindow(FramelessMainWindow):
             if baud <= 0:
                 raise ValueError
         except ValueError:
-            QMessageBox.warning(
-                self, "输入错误",
-                "波特率必须是正整数！",
-            )
+            InfoPopup(
+                "波特率必须是正整数", self
+            ).exec()
             self._cb_baud.blockSignals(True)
             self._cb_baud.setCurrentIndex(
                 max(0, idx - 1)
