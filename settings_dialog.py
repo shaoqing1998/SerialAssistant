@@ -36,6 +36,7 @@ v0.5 — ★ 新增「字体」设置页（预览行 + 内置规则 + 自定义�
   [24] _build_highlight_page: 分隔线上下各加 addSpacing(6) 增加留白
   [25] PANEL_W 520→50，_hl_body 左右各缩进 10px，分隔线全宽、容器居中略窄，视觉对称
   [26] 分隔线上下 addSpacing 6→12 统一边距，setFixedHeight 1→2（≈1.5px）统一厚度
+  [27] 行数上限 QSpinBox: setRange 500→0 起始，setSpecialValueText("无限制")，0=不限制
 """
 from __future__ import annotations
 
@@ -1745,11 +1746,20 @@ class SettingsDialog(QDialog):
             "min-height:18px;max-height:18px}"
             "QSpinBox#max_lines_spin:focus{"
             "border-color:#3b82f6}"
+            "QSpinBox#max_lines_spin:disabled{"
+            "background:#f3f4f6;color:#c0c0c0;"
+            "border-color:#e5e7eb}"
         )
         self._max_lines_spin.valueChanged.connect(
             self._on_max_lines_changed
         )
         ml_h.addWidget(self._max_lines_spin)
+        self._chk_unlimited = QCheckBox("无限制")
+        self._chk_unlimited.setStyleSheet(_CHK_SS)
+        self._chk_unlimited.toggled.connect(
+            self._on_unlimited_toggled
+        )
+        ml_h.addWidget(self._chk_unlimited)
         lbl_ml_warn = QLabel("（不建议超过 10000）")
         lbl_ml_warn.setStyleSheet(
             "font-size:11px;color:#e67700;"
@@ -2112,6 +2122,15 @@ class SettingsDialog(QDialog):
         self._auto_save()
         self.word_wrap_changed.emit(checked)
 
+    def _on_unlimited_toggled(self, checked):
+        """★ v0.61: 无限制勾选 — 禁用 spinbox 并 emit 0"""
+        self._max_lines_spin.setEnabled(not checked)
+        self._auto_save()
+        self.max_lines_changed.emit(
+            0 if checked
+            else self._max_lines_spin.value()
+        )
+
     def _on_max_lines_changed(self, value):
         """★ v0.6: 行数上限变更 — 不触发 rehighlight"""
         self._auto_save()
@@ -2172,7 +2191,10 @@ class SettingsDialog(QDialog):
             "default_fg": self._default_fg_btn.color(),
             "font_size": self._fs_value(),
             "word_wrap": self._chk_wrap.isChecked(),
-            "max_lines": self._max_lines_spin.value(),
+            "max_lines": (
+                0 if self._chk_unlimited.isChecked()
+                else self._max_lines_spin.value()
+            ),
             "builtin_rules": {},
             "user_rules": [],
         }
@@ -2223,10 +2245,17 @@ class SettingsDialog(QDialog):
         )
         for ur in hl_cfg.get("user_rules", []):
             self._custom_list.add_rule(ur)
+        _ml = hl_cfg.get("max_lines", 5000)
+        self._chk_unlimited.blockSignals(True)
         self._max_lines_spin.blockSignals(True)
-        self._max_lines_spin.setValue(
-            hl_cfg.get("max_lines", 5000)
-        )
+        if _ml == 0:
+            self._chk_unlimited.setChecked(True)
+            self._max_lines_spin.setEnabled(False)
+        else:
+            self._chk_unlimited.setChecked(False)
+            self._max_lines_spin.setEnabled(True)
+            self._max_lines_spin.setValue(_ml)
+        self._chk_unlimited.blockSignals(False)
         self._max_lines_spin.blockSignals(False)
 
     def _write_to_config(self):
@@ -2284,6 +2313,10 @@ class SettingsDialog(QDialog):
             for row in self._builtin_rows:
                 row.reset()
             self._custom_list.clear_all()
+            self._chk_unlimited.blockSignals(True)
+            self._chk_unlimited.setChecked(False)
+            self._chk_unlimited.blockSignals(False)
+            self._max_lines_spin.setEnabled(True)
             self._max_lines_spin.blockSignals(True)
             self._max_lines_spin.setValue(5000)
             self._max_lines_spin.blockSignals(False)

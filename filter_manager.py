@@ -155,7 +155,7 @@ class FilteredLogView(RoundedContextTextEdit):
         cursor.setCharFormat(fmt)
         cursor.insertText(line)
         self._line_count += line.count('\n')
-        if self._line_count > self._max_lines:
+        if self._max_lines > 0 and self._line_count > self._max_lines:
             self._trim()
         # ★ 恢复滚动位置
         self._programmatic_scroll = True
