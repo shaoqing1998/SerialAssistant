@@ -39,6 +39,16 @@ v0.5 — ★ 新增「字体」设置页（预览行 + 内置规则 + 自定义�
   [27] 行数上限改为 checkbox 无限制 + spinbox 联动（替代 specialValueText 方案）
   [28] 新增 InfoPopup / ConfirmPopup 自定义弹窗（无标题栏/无图标/居中按钮）
   [29] 设置新增「其他」页，含清空确认提示开关
+  [30] filter_manager: "历史"→"打开文件", tab_close_requested/hover_clear_requested 信号, _request_close_tab/force_close_tab
+  [31] main.py: Ctrl+W 关闭当前 Tab + _on_close_tab/_on_hover_clear 确认弹窗（含 confirm_close_tab 配置）
+  [32] settings Part 2: 其他页新增关闭确认(confirm_close_tab)开关; config.py 新增默认值
+  [33] filter_manager: _HoverIconBtn(24×24 paintEvent 圆形按钮) + hover bar(QGraphicsOpacityEffect 淡入200ms/淡出400ms)
+  [34] FilteredLogView: enterEvent/leaveEvent/set_closable/_update_hover_pos + resizeEvent hover bar 重定位
+  [35] RenamableTabBar: keyPressEvent Del 键 → tabCloseRequested 关闭非 main Tab
+  [36] Ctrl+G 跳转行号: FilteredLogView.goto_line + FilterManager.goto_line_current + main.py QAction(Ctrl+G) → QInputDialog.getInt
+  [37] 新增 InputIntPopup 自定义整数输入弹窗（替代 QInputDialog.getInt），延续 InfoPopup/ConfirmPopup 无标题栏遮罩风格
+  [38] InputIntPopup 改为非模态工具窗（有边框阴影+可拖动+WindowStaysOnTopHint），show()+value_accepted Signal
+  [39] 新增 InputTextPopup 模态文本输入弹窗（遮罩风格），替代自定义波特率 QInputDialog.getText
 """
 from __future__ import annotations
 
@@ -1140,6 +1150,339 @@ class InfoPopup(QDialog):
             self.accept()
             return
         super().mousePressEvent(event)
+
+
+class InputIntPopup(QDialog):
+    """非模态整数输入弹窗 — 有边框阴影、可拖动、置顶不阻塞
+    ★ v0.62: show() + value_accepted Signal"""
+    value_accepted = Signal(int)
+
+    def __init__(self, message, value=1, min_val=1,
+                 max_val=99999, btn_text="确定",
+                 parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            True,
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_DeleteOnClose, True,
+        )
+        self._drag_pos = None
+        self._sd = 8
+        self._pw = 260
+        self._panel = QWidget(self)
+        v = QVBoxLayout(self._panel)
+        v.setContentsMargins(16, 10, 10, 12)
+        v.setSpacing(10)
+        # ── title row ──
+        title_h = QHBoxLayout()
+        title_h.setSpacing(4)
+        lbl = QLabel(message)
+        lbl.setStyleSheet(
+            "font-size:13px;color:#374151;"
+            "background:transparent;"
+            "font-weight:600;"
+        )
+        title_h.addWidget(lbl, stretch=1)
+        cb = _CloseBtn(parent=self._panel)
+        cb.setFixedSize(24, 24)
+        cb.clicked.connect(self.close)
+        title_h.addWidget(cb)
+        v.addLayout(title_h)
+        # ── spinbox ──
+        self._spin = QSpinBox()
+        self._spin.setRange(min_val, max_val)
+        self._spin.setValue(value)
+        self._spin.setFixedHeight(30)
+        self._spin.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        self._spin.setStyleSheet(
+            "QSpinBox{font-size:14px;color:#374151;"
+            "background:#fff;"
+            "border:1.5px solid #d1d5db;"
+            "border-radius:6px;padding:0 8px}"
+            "QSpinBox:focus{border-color:#3b82f6}"
+            "QSpinBox::up-button,"
+            "QSpinBox::down-button{"
+            "width:16px;border:none;"
+            "background:transparent}"
+        )
+        v.addWidget(self._spin)
+        # ── buttons ──
+        btn_h = QHBoxLayout()
+        btn_h.setSpacing(8)
+        btn_h.addStretch(1)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedSize(60, 28)
+        btn_cancel.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_cancel.setStyleSheet(
+            "QPushButton{background:#fff;"
+            "border:1px solid #d1d5db;"
+            "border-radius:6px;color:#374151;"
+            "font-size:13px}"
+            "QPushButton:hover{background:#f3f4f6;"
+            "border-color:#9ca3af}"
+            "QPushButton:pressed{background:#e5e7eb}"
+        )
+        btn_cancel.clicked.connect(self.close)
+        btn_h.addWidget(btn_cancel)
+        btn_ok = QPushButton(btn_text)
+        btn_ok.setFixedSize(60, 28)
+        btn_ok.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_ok.setStyleSheet(
+            "QPushButton{background:#2563eb;"
+            "border:none;border-radius:6px;"
+            "color:#fff;font-size:13px;"
+            "font-weight:600}"
+            "QPushButton:hover{background:#3b82f6}"
+            "QPushButton:pressed{background:#1d4ed8}"
+        )
+        btn_ok.clicked.connect(self._on_accept)
+        btn_h.addWidget(btn_ok)
+        v.addLayout(btn_h)
+        # ── size ──
+        self._panel.setFixedWidth(self._pw)
+        self._panel.adjustSize()
+        self._ph = self._panel.sizeHint().height()
+        self._panel.setFixedHeight(self._ph)
+        self._panel.move(self._sd, self._sd)
+        self.setFixedSize(
+            self._pw + 2 * self._sd,
+            self._ph + 2 * self._sd,
+        )
+
+    def _on_accept(self):
+        self.value_accepted.emit(self._spin.value())
+        self.close()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            pg = self.parent().geometry()
+            x = pg.x() + (
+                pg.width() - self.width()
+            ) // 2
+            y = pg.y() + (
+                pg.height() - self.height()
+            ) // 2
+            self.move(x, y)
+        self.activateWindow()
+        self._spin.setFocus()
+        self._spin.selectAll()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(
+            QPainter.RenderHint.Antialiasing, True
+        )
+        S = self._sd
+        pr = QRectF(S, S, self._pw, self._ph)
+        for i in range(S, 0, -1):
+            a = int(12 * (S - i + 1) / S)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, a))
+            r = pr.adjusted(-i, -i, i, i)
+            p.drawRoundedRect(
+                r, 8 + i * 0.5, 8 + i * 0.5
+            )
+        panel_r = pr.adjusted(
+            0.5, 0.5, -0.5, -0.5
+        )
+        path = QPainterPath()
+        path.addRoundedRect(panel_r, 8, 8)
+        p.fillPath(path, QColor("#ffffff"))
+        p.setPen(QPen(QColor("#d1d5db"), 1.0))
+        p.drawPath(path)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.pos())
+            if (
+                child is None
+                or child is self._panel
+                or isinstance(child, QLabel)
+            ):
+                self._drag_pos = (
+                    event.globalPosition().toPoint()
+                    - self.pos()
+                )
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None:
+            self.move(
+                event.globalPosition().toPoint()
+                - self._drag_pos
+            )
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+        elif event.key() in (
+            Qt.Key.Key_Return, Qt.Key.Key_Enter
+        ):
+            self._on_accept()
+        else:
+            super().keyPressEvent(event)
+
+
+class InputTextPopup(QDialog):
+    """模态文本输入弹窗 — 延续 ConfirmPopup 遮罩风格"""
+
+    def __init__(self, message, text="", parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            True,
+        )
+        self._result_text = None
+        self._pw = 300
+        self._panel = QWidget(self)
+        v = QVBoxLayout(self._panel)
+        v.setContentsMargins(20, 20, 20, 16)
+        v.setSpacing(12)
+        lbl = QLabel(message)
+        lbl.setWordWrap(True)
+        lbl.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        lbl.setStyleSheet(
+            f"font-size:{_POPUP_FONT_SIZE}px;"
+            "color:#374151;"
+            "background:transparent;"
+        )
+        v.addWidget(lbl)
+        edit_h = QHBoxLayout()
+        edit_h.addStretch(1)
+        self._edit = QLineEdit()
+        self._edit.setText(text)
+        self._edit.setFixedSize(160, 32)
+        self._edit.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        self._edit.setStyleSheet(
+            "QLineEdit{font-size:14px;color:#374151;"
+            "background:#fff;"
+            "border:1.5px solid #d1d5db;"
+            "border-radius:6px;padding:0 8px}"
+            "QLineEdit:focus{border-color:#3b82f6}"
+        )
+        edit_h.addWidget(self._edit)
+        edit_h.addStretch(1)
+        v.addLayout(edit_h)
+        btn_h = QHBoxLayout()
+        btn_h.setSpacing(12)
+        btn_h.addStretch(1)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setFixedSize(72, 30)
+        btn_cancel.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_cancel.setStyleSheet(
+            "QPushButton{background:#fff;"
+            "border:1px solid #d1d5db;"
+            "border-radius:6px;color:#374151;"
+            "font-size:13px}"
+            "QPushButton:hover{background:#f3f4f6;"
+            "border-color:#9ca3af}"
+            "QPushButton:pressed{background:#e5e7eb}"
+        )
+        btn_cancel.clicked.connect(self.reject)
+        btn_h.addWidget(btn_cancel)
+        btn_ok = QPushButton("确定")
+        btn_ok.setFixedSize(72, 30)
+        btn_ok.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        btn_ok.setStyleSheet(
+            "QPushButton{background:#2563eb;"
+            "border:none;border-radius:6px;"
+            "color:#fff;font-size:13px;"
+            "font-weight:600}"
+            "QPushButton:hover{background:#3b82f6}"
+            "QPushButton:pressed{background:#1d4ed8}"
+        )
+        btn_ok.clicked.connect(self._on_accept)
+        btn_h.addWidget(btn_ok)
+        btn_h.addStretch(1)
+        v.addLayout(btn_h)
+        self._panel.setFixedWidth(self._pw)
+        self._panel.adjustSize()
+        self._ph = self._panel.sizeHint().height()
+        self._panel.setFixedHeight(self._ph)
+
+    def _on_accept(self):
+        self._result_text = self._edit.text()
+        self.accept()
+
+    def get_text(self):
+        return self._result_text
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            pw = self.parent()
+            self.resize(pw.size())
+            self.move(pw.mapToGlobal(QPoint(0, 0)))
+        self._panel.move(
+            (self.width() - self._pw) // 2,
+            (self.height() - self._ph) // 2,
+        )
+        self._edit.setFocus()
+        self._edit.selectAll()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(
+            QPainter.RenderHint.Antialiasing, True
+        )
+        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
+        pr = QRectF(
+            self._panel.geometry()
+        ).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(pr, 8, 8)
+        p.fillPath(path, QColor("#ffffff"))
+        p.setPen(QPen(QColor("#d1d5db"), 1.0))
+        p.drawPath(path)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if not self._panel.geometry().contains(
+            event.pos()
+        ):
+            self.reject()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (
+            Qt.Key.Key_Return, Qt.Key.Key_Enter
+        ):
+            self._on_accept()
+        else:
+            super().keyPressEvent(event)
 
 
 class ConfirmPopup(QDialog):
@@ -2296,6 +2639,21 @@ class SettingsDialog(QDialog):
             self._auto_save
         )
         v.addWidget(self._chk_confirm_clear)
+        self._chk_confirm_close_tab = QCheckBox(
+            "关闭 Tab 时显示确认提示"
+        )
+        self._chk_confirm_close_tab.setStyleSheet(
+            _CHK_SS
+        )
+        self._chk_confirm_close_tab.setChecked(
+            self._config.get("ui", {}).get(
+                "confirm_close_tab", True
+            )
+        )
+        self._chk_confirm_close_tab.toggled.connect(
+            self._auto_save
+        )
+        v.addWidget(self._chk_confirm_close_tab)
         v.addStretch(1)
         return page
 
@@ -2511,6 +2869,13 @@ class SettingsDialog(QDialog):
             )
         )
         self._chk_confirm_clear.blockSignals(False)
+        self._chk_confirm_close_tab.blockSignals(True)
+        self._chk_confirm_close_tab.setChecked(
+            self._config.get("ui", {}).get(
+                "confirm_close_tab", True
+            )
+        )
+        self._chk_confirm_close_tab.blockSignals(False)
 
     def _write_to_config(self):
         if "logging" not in self._config:
@@ -2533,6 +2898,9 @@ class SettingsDialog(QDialog):
         self._config.setdefault("ui", {})[
             "confirm_clear"
         ] = self._chk_confirm_clear.isChecked()
+        self._config.setdefault("ui", {})[
+            "confirm_close_tab"
+        ] = self._chk_confirm_close_tab.isChecked()
         self._config["highlight"] = (
             self._build_hl_config()
         )
@@ -2580,4 +2948,5 @@ class SettingsDialog(QDialog):
             self._on_hl_changed()
         elif idx == 2:
             self._chk_confirm_clear.setChecked(True)
+            self._chk_confirm_close_tab.setChecked(True)
             self._auto_save()

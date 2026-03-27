@@ -4,6 +4,11 @@ v0.6 — ★ 日志区默认字号 12pt + Ctrl+滚轮/箭头调字号
        ★ 右下角字号提示浮层（2秒后淡出）
        ★ FilteredLogView 绑定 LogHighlighter 高亮引擎
        ★ FilterManager.refresh_highlighter 刷新所有 Tab 高亮
+v0.62 — ★ "历史"按钮改名"打开文件"
+        ★ hover 悬浮按钮（清空+关闭，右上角淡入淡出）
+        ★ Del 关闭 Tab + Ctrl+W 支持（信号路由确认）
+        ★ tab_close_requested / hover_clear_requested 信号
+        ★ Ctrl+G 跳转行号（goto_line / goto_line_current）
 """
 from __future__ import annotations
 from typing import Callable
@@ -15,12 +20,12 @@ from PySide6.QtWidgets import (
     QLabel, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QRect, QPoint,
+    Qt, Signal, QRect, QPoint, QPointF, QRectF,
     QTimer, QPropertyAnimation, QEasingCurve,
 )
 from PySide6.QtGui import (
     QFont, QColor, QTextCharFormat, QTextCursor,
-    QPainter, QPen,
+    QPainter, QPen, QPainterPath,
 )
 from rounded_menu import (
     RoundedMenu, RoundedContextTextEdit,
@@ -30,10 +35,92 @@ from highlight_engine import LogHighlighter
 
 
 # ════════════════════════════════════════════
+# 悬浮图标按钮（清空 / 关闭）
+# ════════════════════════════════════════════
+class _HoverIconBtn(QWidget):
+    """24×24 圆形图标按钮（paintEvent 绘制 trash / close）"""
+    clicked = Signal()
+
+    def __init__(self, icon_type="close", parent=None):
+        super().__init__(parent)
+        self._icon_type = icon_type  # "trash" or "close"
+        self._hovered = False
+        self._pressed = False
+        self.setFixedSize(24, 24)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setMouseTracking(True)
+
+    def enterEvent(self, e):
+        self._hovered = True; self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False; self._pressed = False; self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True; self.update()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            if self._pressed and self.rect().contains(
+                e.position().toPoint()
+            ):
+                self.clicked.emit()
+            self._pressed = False; self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = QRectF(0, 0, 24, 24)
+        # 背景圆
+        if self._pressed:
+            bg = QColor("#dbeafe")
+        elif self._hovered:
+            bg = QColor("#f3f4f6")
+        else:
+            bg = QColor(255, 255, 255, 0)
+        path = QPainterPath()
+        path.addEllipse(r)
+        p.fillPath(path, bg)
+        # 图标线条
+        if self._pressed:
+            pen_c = QColor("#2563eb")
+        elif self._hovered:
+            pen_c = QColor("#374151")
+        else:
+            pen_c = QColor("#9ca3af")
+        p.setPen(QPen(pen_c, 1.6, Qt.PenStyle.SolidLine,
+                       Qt.PenCapStyle.RoundCap))
+        cx, cy = 12.0, 12.0
+        if self._icon_type == "close":
+            d = 4.0
+            p.drawLine(QPointF(cx - d, cy - d),
+                       QPointF(cx + d, cy + d))
+            p.drawLine(QPointF(cx + d, cy - d),
+                       QPointF(cx - d, cy + d))
+        else:  # trash
+            # 桶盖
+            p.drawLine(QPointF(8, 8.5), QPointF(16, 8.5))
+            p.drawLine(QPointF(10.5, 8.5), QPointF(10.5, 7))
+            p.drawLine(QPointF(10.5, 7), QPointF(13.5, 7))
+            p.drawLine(QPointF(13.5, 7), QPointF(13.5, 8.5))
+            # 桶身
+            p.drawLine(QPointF(9, 9.5), QPointF(9.5, 16.5))
+            p.drawLine(QPointF(9.5, 16.5), QPointF(14.5, 16.5))
+            p.drawLine(QPointF(14.5, 16.5), QPointF(15, 9.5))
+            # 竖线
+            p.drawLine(QPointF(12, 11), QPointF(12, 15))
+        p.end()
+
+
+# ════════════════════════════════════════════
 # 单个过滤 Tab 的日志视图
 # ════════════════════════════════════════════
 class FilteredLogView(RoundedContextTextEdit):
     font_size_changed = Signal(int)  # ★ v0.6 fix: 通知字号变化
+    clear_requested = Signal()   # ★ v0.62: hover 清空
+    close_requested = Signal()   # ★ v0.62: hover 关闭
 
     def __init__(self, keywords=None, case_sensitive=False,
                  invert=False, parent=None):
@@ -124,6 +211,58 @@ class FilteredLogView(RoundedContextTextEdit):
         self._scroll_bottom_btn.hide()
         self.verticalScrollBar().valueChanged.connect(
             self._on_vscroll_changed
+        )
+
+        # ★ v0.62: hover 悬浮按钮栏（清空 + 关闭）
+        self._hover_bar = QWidget(self)
+        self._hover_bar.setStyleSheet(
+            "background:transparent;"
+        )
+        hover_lay = QHBoxLayout(self._hover_bar)
+        hover_lay.setContentsMargins(4, 4, 4, 4)
+        hover_lay.setSpacing(2)
+        self._hover_clear_btn = _HoverIconBtn(
+            "trash", self._hover_bar
+        )
+        self._hover_close_btn = _HoverIconBtn(
+            "close", self._hover_bar
+        )
+        self._hover_clear_btn.clicked.connect(
+            self.clear_requested.emit
+        )
+        self._hover_close_btn.clicked.connect(
+            self.close_requested.emit
+        )
+        hover_lay.addWidget(self._hover_clear_btn)
+        hover_lay.addWidget(self._hover_close_btn)
+        self._hover_bar.setFixedSize(60, 32)
+        self._hover_bar.hide()
+        # opacity + fade 动画
+        self._hover_opacity = QGraphicsOpacityEffect(
+            self._hover_bar
+        )
+        self._hover_bar.setGraphicsEffect(self._hover_opacity)
+        self._hover_opacity.setOpacity(0.0)
+        self._hover_fade_in = QPropertyAnimation(
+            self._hover_opacity, b"opacity"
+        )
+        self._hover_fade_in.setDuration(200)
+        self._hover_fade_in.setStartValue(0.0)
+        self._hover_fade_in.setEndValue(0.9)
+        self._hover_fade_in.setEasingCurve(
+            QEasingCurve.Type.OutCubic
+        )
+        self._hover_fade_out = QPropertyAnimation(
+            self._hover_opacity, b"opacity"
+        )
+        self._hover_fade_out.setDuration(400)
+        self._hover_fade_out.setStartValue(0.9)
+        self._hover_fade_out.setEndValue(0.0)
+        self._hover_fade_out.setEasingCurve(
+            QEasingCurve.Type.OutCubic
+        )
+        self._hover_fade_out.finished.connect(
+            self._hover_bar.hide
         )
 
 
@@ -286,6 +425,37 @@ class FilteredLogView(RoundedContextTextEdit):
             vbar.setValue(v_val)
         self._adjusting_width = False
 
+    # ★ v0.62: hover 悬浮按钮 — 淡入 / 淡出
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._hover_fade_out.stop()
+        cur = self._hover_opacity.opacity()
+        self._hover_fade_in.setStartValue(cur)
+        self._update_hover_pos()
+        self._hover_bar.show()
+        self._hover_bar.raise_()
+        self._hover_fade_in.start()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self._hover_fade_in.stop()
+        cur = self._hover_opacity.opacity()
+        self._hover_fade_out.setStartValue(cur)
+        self._hover_fade_out.start()
+
+    def set_closable(self, closable):
+        """main tab 隐藏关闭按钮"""
+        self._hover_close_btn.setVisible(closable)
+        self._hover_bar.setFixedSize(
+            60 if closable else 36, 32
+        )
+
+    def _update_hover_pos(self):
+        vp = self.viewport()
+        x = vp.x() + vp.width() - self._hover_bar.width() - 6
+        y = vp.y() + 6
+        self._hover_bar.move(x, y)
+
     def wheelEvent(self, event):
         if (event.modifiers()
                 & Qt.KeyboardModifier.ControlModifier):
@@ -347,6 +517,8 @@ class FilteredLogView(RoundedContextTextEdit):
             self._size_tip.move(x, y)
         if self._scroll_bottom_btn.isVisible():
             self._update_scroll_btn_pos()
+        if self._hover_bar.isVisible():
+            self._update_hover_pos()
 
     def _restore_wrap(self):
         """resize 结束后恢复自动换行"""
@@ -414,6 +586,26 @@ class FilteredLogView(RoundedContextTextEdit):
         else:
             self._highlighter.set_enabled(False)
 
+    # ★ v0.62: Ctrl+G 跳转行号
+    def goto_line(self, line_num):
+        """跳转到指定行号（1-based）"""
+        doc = self.document()
+        block = doc.findBlockByLineNumber(
+            max(0, line_num - 1)
+        )
+        if not block.isValid():
+            block = doc.lastBlock()
+        cursor = QTextCursor(block)
+        self.setTextCursor(cursor)
+        # QTextEdit 没有 centerCursor，手动滚动居中
+        self.ensureCursorVisible()
+        cursor_rect = self.cursorRect()
+        vp_h = self.viewport().height()
+        vbar = self.verticalScrollBar()
+        offset = cursor_rect.top() - vp_h // 2
+        if offset > 0:
+            vbar.setValue(vbar.value() + offset)
+
 
 # ════════════════════════════════════════════
 # 自定义 TabBar
@@ -468,6 +660,16 @@ class RenamableTabBar(QTabBar):
         elif chosen == act_close:
             self.tabCloseRequested.emit(idx)
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Delete:
+            idx = self.currentIndex()
+            if (idx >= 0
+                    and self.tabData(idx) != _PLUS_DATA
+                    and self.tabText(idx).strip() != "main"):
+                self.tabCloseRequested.emit(idx)
+                return
+        super().keyPressEvent(event)
+
     def paintEvent(self, event):
         super().paintEvent(event)
         cur = self.currentIndex()
@@ -503,6 +705,8 @@ class RenamableTabBar(QTabBar):
 # ════════════════════════════════════════════
 class FilterManager(QWidget):
     filter_changed = Signal()
+    tab_close_requested = Signal(int)   # ★ v0.62
+    hover_clear_requested = Signal()    # ★ v0.62
 
     def __init__(self, config, h_margin=10, right_width=272,
                  toggle_send_callback=None, parent=None):
@@ -559,7 +763,9 @@ class FilterManager(QWidget):
         self._tabs.setTabBar(self._tab_bar)
         self._tab_bar.tab_rename_requested.connect(self._rename_tab)
         self._tab_bar.add_tab_requested.connect(self._add_new_tab)
-        self._tab_bar.tabCloseRequested.connect(self._close_tab_by_idx)
+        self._tab_bar.tabCloseRequested.connect(
+            self._request_close_tab
+        )
         self._tab_bar.save_tab_requested.connect(self._on_save_tab_request)
         self._tabs.setTabsClosable(False)
         self._tabs.setMovable(False)
@@ -571,6 +777,10 @@ class FilterManager(QWidget):
         main_view.font_size_changed.connect(
             self._on_font_size_changed
         )
+        main_view.clear_requested.connect(
+            self.hover_clear_requested.emit
+        )
+        main_view.set_closable(False)
         self._tabs.addTab(main_view, "main")
         for i in range(1, 2):
             self._add_tab(f"filter-{i:02d}", closable=True)
@@ -606,7 +816,7 @@ class FilterManager(QWidget):
         self._chk_invert.setToolTip("显示不包含关键词的行")
         self._chk_case.toggled.connect(self._apply_kw)
         self._chk_invert.toggled.connect(self._apply_kw)
-        self._btn_refilter = QPushButton("历史")
+        self._btn_refilter = QPushButton("打开文件")
         self._btn_refilter.setObjectName("BtnRefilter")
         self._btn_refilter.setToolTip("用当前关键词重新过滤已有历史数据")
         self._btn_refilter.clicked.connect(self._refilter)
@@ -639,6 +849,14 @@ class FilterManager(QWidget):
         view.font_size_changed.connect(
             self._on_font_size_changed
         )
+        view.clear_requested.connect(
+            self.hover_clear_requested.emit
+        )
+        view.close_requested.connect(
+            lambda _v=view: self._request_close_tab(
+                self._tabs.indexOf(_v)
+            )
+        )
         plus_idx = self._find_plus_idx()
         if plus_idx >= 0:
             self._tabs.insertTab(plus_idx, view, name)
@@ -660,7 +878,22 @@ class FilterManager(QWidget):
         new_idx = self._add_tab(f"filter-{n:02d}", closable=True)
         self._tabs.setCurrentIndex(new_idx)
 
-    def _close_tab_by_idx(self, idx):
+    def _request_close_tab(self, idx):
+        """路由到 tab_close_requested 信号（需确认）"""
+        name = self._tabs.tabText(idx).strip()
+        if name in ("main", "+"):
+            return
+        if self._tab_bar.tabData(idx) == _PLUS_DATA:
+            return
+        self.tab_close_requested.emit(idx)
+
+    def request_close_current_tab(self):
+        """请求关闭当前 Tab（Ctrl+W / hover ×）"""
+        idx = self._tabs.currentIndex()
+        self._request_close_tab(idx)
+
+    def force_close_tab(self, idx):
+        """确认后实际关闭 Tab"""
         name = self._tabs.tabText(idx).strip()
         if name in ("main", "+"):
             return
@@ -814,6 +1047,13 @@ class FilterManager(QWidget):
         if isinstance(v, FilteredLogView):
             v.clear()
             v._line_count = 0
+
+    # ★ v0.62: Ctrl+G 跳转行号
+    def goto_line_current(self, line_num):
+        """跳转当前 Tab 到指定行号"""
+        v = self._tabs.currentWidget()
+        if isinstance(v, FilteredLogView):
+            v.goto_line(line_num)
 
     def set_auto_scroll(self, v):
         self._auto_scroll = v

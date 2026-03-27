@@ -1,5 +1,5 @@
 """
-main.py - 串口调试助手 v0.6
+main.py - 串口调试助手 v0.62
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
 ★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
 ★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
@@ -23,14 +23,17 @@ from PySide6.QtWidgets import (
     QComboBox, QPushButton, QLabel,
     QCheckBox, QSizePolicy,
     QSpinBox, QStyledItemDelegate,
-    QInputDialog, QFileDialog,
+    QFileDialog,
     QDialog,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QEvent, QPoint,
     QAbstractNativeEventFilter,
 )
-from PySide6.QtGui import QFont, QMouseEvent, QColor, QCursor
+from PySide6.QtGui import (
+    QFont, QMouseEvent, QColor, QCursor,
+    QAction, QKeySequence,
+)
 
 from qframelesswindow import FramelessMainWindow
 from config import load_config, save_config
@@ -44,6 +47,7 @@ from title_bar import (
 from log_manager import LogManager
 from settings_dialog import (
     SettingsDialog, InfoPopup, ConfirmPopup,
+    InputIntPopup, InputTextPopup,
 )
 
 
@@ -436,10 +440,29 @@ class MainWindow(FramelessMainWindow):
         QApplication.instance().installNativeEventFilter(
             self._close_filter
         )
+        # ★ v0.62: Ctrl+W 关闭当前 Tab
+        _act_close_tab = QAction(self)
+        _act_close_tab.setShortcut(
+            QKeySequence("Ctrl+W")
+        )
+        _act_close_tab.triggered.connect(
+            lambda: self._filter_mgr
+                .request_close_current_tab()
+        )
+        self.addAction(_act_close_tab)
+        # ★ v0.62: Ctrl+G 跳转行号
+        _act_goto_line = QAction(self)
+        _act_goto_line.setShortcut(
+            QKeySequence("Ctrl+G")
+        )
+        _act_goto_line.triggered.connect(
+            self._on_goto_line
+        )
+        self.addAction(_act_goto_line)
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.6")
+        self.setWindowTitle("串口调试助手  v0.62")
         tb = self.titleBar
         tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)
@@ -984,6 +1007,13 @@ class MainWindow(FramelessMainWindow):
         self._filter_mgr.set_save_as_callback(
             self._save_as_tab
         )
+        # ★ v0.62: hover 按钮 + 关闭 Tab 信号
+        self._filter_mgr.tab_close_requested.connect(
+            self._on_close_tab
+        )
+        self._filter_mgr.hover_clear_requested.connect(
+            self._on_hover_clear
+        )
 
     def _on_clear_context_menu(self, pos):
         menu = RoundedMenu(self.window())
@@ -1028,6 +1058,83 @@ class MainWindow(FramelessMainWindow):
                 ] = False
                 save_config(self._cfg)
         self._filter_mgr.clear_all()
+
+    def _on_close_tab(self, idx):
+        """★ v0.62: 关闭 Tab 确认"""
+        name = self._filter_mgr._tabs.tabText(
+            idx
+        ).strip()
+        if name in ("main", "+"):
+            return
+        if self._cfg.get("ui", {}).get(
+            "confirm_close_tab", True
+        ):
+            dlg = ConfirmPopup(
+                f"确定要关闭「{name}」吗？",
+                show_dont_ask=True,
+                parent=self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if dlg.dont_ask_again():
+                self._cfg.setdefault("ui", {})[
+                    "confirm_close_tab"
+                ] = False
+                save_config(self._cfg)
+        self._filter_mgr.force_close_tab(idx)
+
+    def _on_hover_clear(self):
+        """★ v0.62: hover 清空按钮 → 只清空当前 Tab"""
+        if self._cfg.get("ui", {}).get(
+            "confirm_clear", True
+        ):
+            dlg = ConfirmPopup(
+                "确定要清空当前日志吗？",
+                show_dont_ask=True,
+                parent=self,
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if dlg.dont_ask_again():
+                self._cfg.setdefault("ui", {})[
+                    "confirm_clear"
+                ] = False
+                save_config(self._cfg)
+        self._filter_mgr.clear_current()
+
+    def _on_goto_line(self):
+        """★ v0.62: Ctrl+G 跳转行号（非模态）"""
+        v = self._filter_mgr._tabs.currentWidget()
+        if not isinstance(v, FilteredLogView):
+            return
+        total = v.document().blockCount()
+        # 已打开则关闭重建（行数可能变了）
+        old = getattr(self, '_goto_dlg', None)
+        try:
+            if old is not None and old.isVisible():
+                old.close()
+        except RuntimeError:
+            pass
+        self._goto_dlg = None
+        dlg = InputIntPopup(
+            f"跳转行号（共 {total} 行）",
+            value=1, min_val=1, max_val=999999,
+            btn_text="跳转",
+            parent=self,
+        )
+        def _do_goto(line):
+            cur = self._filter_mgr._tabs.currentWidget()
+            if isinstance(cur, FilteredLogView):
+                t = cur.document().blockCount()
+                self._filter_mgr.goto_line_current(
+                    min(line, t)
+                )
+        dlg.value_accepted.connect(_do_goto)
+        dlg.destroyed.connect(
+            lambda: setattr(self, '_goto_dlg', None)
+        )
+        self._goto_dlg = dlg
+        dlg.show()
 
     def eventFilter(self, obj, event):
         if (
@@ -1238,11 +1345,19 @@ class MainWindow(FramelessMainWindow):
         text = self._cb_baud.itemText(idx)
         if text != "自定义...":
             return
-        val, ok = QInputDialog.getText(
-            self, "自定义波特率",
-            "请输入波特率（整数）：", text="",
+        dlg = InputTextPopup(
+            "请输入波特率（整数）",
+            parent=self,
         )
-        if not ok or not val.strip():
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self._cb_baud.blockSignals(True)
+            self._cb_baud.setCurrentIndex(
+                max(0, idx - 1)
+            )
+            self._cb_baud.blockSignals(False)
+            return
+        val = dlg.get_text()
+        if not val or not val.strip():
             self._cb_baud.blockSignals(True)
             self._cb_baud.setCurrentIndex(
                 max(0, idx - 1)
