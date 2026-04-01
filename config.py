@@ -23,6 +23,7 @@ _DEFAULT_CONFIG = {
         "font_size": 10,
         "max_log_lines": 5000,
         "confirm_clear": True,
+        "confirm_close_tab": True,
     },
     "send": {
         "hex_mode": False,
@@ -37,7 +38,13 @@ _DEFAULT_CONFIG = {
         "record_all_tabs": True,
         "selected_tabs": [],
     },
-    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": True, "fg": "#d97706"}}, "user_rules": [], "word_wrap": False, "max_lines": 5000}
+    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": True, "fg": "#d97706"}}, "user_rules": [], "word_wrap": False, "max_lines": 5000},
+    # ★ v0.63: 快捷键配置
+    "shortcuts": {
+        "close_tab": "Ctrl+W",
+        "goto_line": "Ctrl+G",
+        "send": "Ctrl+Return",
+    },
 }
 def load_config() -> dict:
     """加载配置文件，若不存在则返回默认配置"""

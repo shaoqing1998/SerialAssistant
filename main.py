@@ -1,5 +1,5 @@
 """
-main.py - 串口调试助手 v0.62
+main.py - 串口调试助手 v0.63
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
 ★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
 ★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
@@ -440,29 +440,28 @@ class MainWindow(FramelessMainWindow):
         QApplication.instance().installNativeEventFilter(
             self._close_filter
         )
-        # ★ v0.62: Ctrl+W 关闭当前 Tab
-        _act_close_tab = QAction(self)
-        _act_close_tab.setShortcut(
-            QKeySequence("Ctrl+W")
-        )
-        _act_close_tab.triggered.connect(
+        # ★ v0.63: 动态快捷键（从配置读取）
+        self._act_close_tab = QAction(self)
+        self._act_close_tab.triggered.connect(
             lambda: self._filter_mgr
                 .request_close_current_tab()
         )
-        self.addAction(_act_close_tab)
-        # ★ v0.62: Ctrl+G 跳转行号
-        _act_goto_line = QAction(self)
-        _act_goto_line.setShortcut(
-            QKeySequence("Ctrl+G")
-        )
-        _act_goto_line.triggered.connect(
+        self.addAction(self._act_close_tab)
+        self._act_goto_line = QAction(self)
+        self._act_goto_line.triggered.connect(
             self._on_goto_line
         )
-        self.addAction(_act_goto_line)
+        self.addAction(self._act_goto_line)
+        self._act_send = QAction(self)
+        self._act_send.triggered.connect(
+            self._do_send
+        )
+        self.addAction(self._act_send)
+        self._rebind_shortcuts()
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.62")
+        self.setWindowTitle("串口调试助手  v0.63")
         tb = self.titleBar
         tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)
@@ -802,6 +801,25 @@ class MainWindow(FramelessMainWindow):
                     )
 
 
+    def _rebind_shortcuts(self):
+        """从配置读取快捷键并绑定到 QAction"""
+        sc = self._cfg.get("shortcuts", {})
+        self._act_close_tab.setShortcut(
+            QKeySequence(
+                sc.get("close_tab", "Ctrl+W")
+            )
+        )
+        self._act_goto_line.setShortcut(
+            QKeySequence(
+                sc.get("goto_line", "Ctrl+G")
+            )
+        )
+        self._act_send.setShortcut(
+            QKeySequence(
+                sc.get("send", "Ctrl+Return")
+            )
+        )
+
     # ── ★ v0.44: 首次显示匹配设置按钮尺寸 ──
     def showEvent(self, event):
         super().showEvent(event)
@@ -906,6 +924,8 @@ class MainWindow(FramelessMainWindow):
         dlg.exec()
         # ★ v0.6: 设置关闭后只更新配置，不 rehighlight 已有日志
         self._filter_mgr.update_highlighter_config(self._cfg)
+        # ★ v0.63: 重新绑定快捷键
+        self._rebind_shortcuts()
         # ★ fix: 设置关闭后同步日志录制状态
         log_on = self._cfg.get("logging", {}).get(
             "enabled", False
