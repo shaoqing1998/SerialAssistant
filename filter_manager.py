@@ -372,6 +372,7 @@ class FilteredLogView(RoundedContextTextEdit):
             "color: #1e293b; padding: 2px; "
             f"font-size: {self._font_size}pt; "
             "}"
+            "QTextEdit:focus { border: 1px solid #3b82f6; }"
         )
 
     def _apply_font_size(self, size):
@@ -382,6 +383,21 @@ class FilteredLogView(RoundedContextTextEdit):
         self.setFont(font)
         self._update_stylesheet()
         self._update_line_number_width()
+        # ★ Fix: 延迟到下一帧重排，等字号变化的布局完成后再修正
+        QTimer.singleShot(0, self._relayout_after_font)
+
+    def _relayout_after_font(self):
+        """字号变化后延迟触发的完整重排"""
+        doc = self.document()
+        doc.setTextWidth(-1)
+        if self._wrap_mode == self.LineWrapMode.NoWrap:
+            self._adjust_doc_width()
+        # ★ 修正滚动位置：跟踪底部时重新沿底
+        vbar = self.verticalScrollBar()
+        if self._auto_scroll:
+            self._programmatic_scroll = True
+            vbar.setValue(vbar.maximum())
+            self._programmatic_scroll = False
 
     # ★ v0.6: 字号调节
     def _change_font_size(self, delta):
@@ -605,16 +621,71 @@ class FilteredLogView(RoundedContextTextEdit):
         super().wheelEvent(event)
 
     def keyPressEvent(self, event):
-        if (event.modifiers()
-                & Qt.KeyboardModifier.ControlModifier):
-            if event.key() == Qt.Key.Key_Up:
-                self._change_font_size(1)
-                event.accept()
-                return
-            elif event.key() == Qt.Key.Key_Down:
-                self._change_font_size(-1)
-                event.accept()
-                return
+        key = event.key()
+        mods = event.modifiers()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        # Ctrl+Up/Down: 字号调节
+        if ctrl and key == Qt.Key.Key_Up:
+            self._change_font_size(1)
+            event.accept()
+            return
+        if ctrl and key == Qt.Key.Key_Down:
+            self._change_font_size(-1)
+            event.accept()
+            return
+        # PgUp / PgDn: 翔页（Shift → 水平翔页）
+        if key == Qt.Key.Key_PageUp:
+            if shift:
+                hbar = self.horizontalScrollBar()
+                hbar.setValue(
+                    hbar.value() - self.viewport().width()
+                )
+            else:
+                vbar = self.verticalScrollBar()
+                vbar.setValue(
+                    vbar.value() - self.viewport().height()
+                )
+            event.accept()
+            return
+        if key == Qt.Key.Key_PageDown:
+            if shift:
+                hbar = self.horizontalScrollBar()
+                hbar.setValue(
+                    hbar.value() + self.viewport().width()
+                )
+            else:
+                vbar = self.verticalScrollBar()
+                vbar.setValue(
+                    vbar.value() + self.viewport().height()
+                )
+            event.accept()
+            return
+        # End / Ctrl+End: 跳到最后一行有内容的位置
+        if key == Qt.Key.Key_End:
+            doc = self.document()
+            block = doc.lastBlock()
+            while (block.isValid()
+                    and block.text().strip() == ''
+                    and block.previous().isValid()):
+                block = block.previous()
+            if block.isValid():
+                tc = QTextCursor(block)
+                tc.movePosition(
+                    QTextCursor.MoveOperation.EndOfBlock
+                )
+                self.setTextCursor(tc)
+                self.ensureCursorVisible()
+            event.accept()
+            return
+        # Home / Ctrl+Home: 跳到文档开头
+        if key == Qt.Key.Key_Home:
+            tc = QTextCursor(self.document().begin())
+            self.setTextCursor(tc)
+            vbar = self.verticalScrollBar()
+            vbar.setValue(0)
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     # ★ v0.6: resize 冻结 — 拖动窗口期间跳过布局重排
