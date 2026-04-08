@@ -921,6 +921,10 @@ class MainWindow(FramelessMainWindow):
         dlg.max_lines_changed.connect(
             lambda n: self._filter_mgr.update_max_lines(n)
         )
+        # ★ v0.69: 行号显示开关
+        dlg.show_line_numbers_changed.connect(
+            lambda v: self._filter_mgr.set_line_numbers_visible(v)
+        )
         dlg.exec()
         # ★ v0.6: 设置关闭后只更新配置，不 rehighlight 已有日志
         self._filter_mgr.update_highlighter_config(self._cfg)

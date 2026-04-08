@@ -1618,14 +1618,19 @@ class ConfirmPopup(QDialog):
 # ★ v0.63: 快捷键捕获控件
 # ═══════════════════════════════════════════
 class _ShortcutEdit(QWidget):
-    """点击进入捕获模式，按下按键组合后记录并显示"""
+    """点击进入捕获模式，按下按键组合后记录并显示
+    ★ v0.69: 内置圆润重置按钮 + Backspace/Delete 清空"""
     shortcut_changed = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, default="", parent=None):
         super().__init__(parent)
         self._value = ""
+        self._default = default
         self._capturing = False
         self._hovered = False
+        self._reset_hovered = False
+        self._clear_hovered = False
+        self._conflict = False
         self.setFixedHeight(28)
         self.setMinimumWidth(100)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1641,16 +1646,98 @@ class _ShortcutEdit(QWidget):
         self._capturing = False
         self.update()
 
+    def _icon_size(self):
+        return 18
+
+    def _reset_rect(self):
+        """↺ 重置按钮区域（左侧）"""
+        s = self._icon_size()
+        if self._show_clear():
+            x = self.width() - s * 2 - 8
+        else:
+            x = self.width() - s - 4
+        return QRectF(x, (self.height() - s) / 2, s, s)
+
+    def _clear_rect(self):
+        """x 清空按钮区域（右侧）"""
+        s = self._icon_size()
+        return QRectF(
+            self.width() - s - 4,
+            (self.height() - s) / 2, s, s,
+        )
+
+    def _show_clear(self):
+        return (
+            bool(self._value)
+            and not self._capturing
+        )
+
+    def _show_reset(self):
+        return (
+            self._value != self._default
+            and not self._capturing
+        )
+
     def enterEvent(self, e):
         self._hovered = True
         self.update()
 
     def leaveEvent(self, e):
         self._hovered = False
+        self._reset_hovered = False
         self.update()
+
+    def mouseMoveEvent(self, e):
+        pos = e.position()
+        changed = False
+        # 重置按钮 hover
+        if self._show_reset():
+            rr = self._reset_rect()
+            was = self._reset_hovered
+            self._reset_hovered = rr.contains(pos)
+            if was != self._reset_hovered:
+                changed = True
+        else:
+            if self._reset_hovered:
+                self._reset_hovered = False
+                changed = True
+        # 清空按钮 hover
+        if self._show_clear():
+            cr = self._clear_rect()
+            was_c = self._clear_hovered
+            self._clear_hovered = cr.contains(pos)
+            if was_c != self._clear_hovered:
+                changed = True
+        else:
+            if self._clear_hovered:
+                self._clear_hovered = False
+                changed = True
+        if changed:
+            self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
+            pos = e.position()
+            # 点击清空按钮
+            if (self._show_clear()
+                    and self._clear_rect().contains(pos)):
+                self._value = ""
+                self._clear_hovered = False
+                self._reset_hovered = False
+                self.update()
+                self.shortcut_changed.emit("")
+                return
+            # 点击重置按钮
+            if (self._show_reset()
+                    and self._reset_rect().contains(pos)):
+                self._value = self._default
+                self._clear_hovered = False
+                self._reset_hovered = False
+                self.update()
+                self.shortcut_changed.emit(
+                    self._default
+                )
+                return
             self._capturing = True
             self.setFocus()
             self.update()
@@ -1676,9 +1763,19 @@ class _ShortcutEdit(QWidget):
             self._capturing = False
             self.update()
             return
+        # ★ v0.69: Backspace/Delete 清空快捷键
+        if key in (
+            Qt.Key.Key_Backspace, Qt.Key.Key_Delete,
+        ):
+            self._value = ""
+            self._capturing = False
+            self.update()
+            self.shortcut_changed.emit("")
+            event.accept()
+            return
         mods = event.modifiers()
         seq = QKeySequence(
-            int(mods) | key
+            int(mods.value) | key
         ).toString(
             QKeySequence.SequenceFormat.NativeText
         )
@@ -1700,8 +1797,13 @@ class _ShortcutEdit(QWidget):
         if self._capturing:
             border = QColor("#3b82f6")
             bg = QColor("#eff6ff")
-            text = "请按下快捷键..."
+            text = "按键设置… (Esc取消/Del清空)"
             text_color = QColor("#3b82f6")
+        elif self._conflict:
+            border = QColor("#ef4444")
+            bg = QColor("#fef2f2")
+            text = self._value or "（未设置）"
+            text_color = QColor("#dc2626")
         elif self._hovered:
             border = QColor("#9ca3af")
             bg = QColor("#f9fafb")
@@ -1716,7 +1818,7 @@ class _ShortcutEdit(QWidget):
                 else QColor("#9ca3af")
             )
         path = QPainterPath()
-        path.addRoundedRect(r, 5, 5)
+        path.addRoundedRect(r, 6, 6)
         p.fillPath(path, bg)
         p.setPen(QPen(border, 1.5))
         p.drawPath(path)
@@ -1725,27 +1827,66 @@ class _ShortcutEdit(QWidget):
         font.setFamily("Consolas")
         p.setFont(font)
         p.setPen(text_color)
+        # 计算文字右边界（给图标留空间）
+        n_icons = (1 if self._show_clear() else 0) + (1 if self._show_reset() else 0)
+        text_r = self.width() - 8 - n_icons * (self._icon_size() + 2)
         p.drawText(
-            QRectF(
-                8, 0,
-                self.width() - 16, self.height(),
-            ),
+            QRectF(8, 0, text_r - 8, self.height()),
             Qt.AlignmentFlag.AlignVCenter
             | Qt.AlignmentFlag.AlignLeft,
             text,
         )
+        # ★ v0.69: 内置圆润图标按钮（× 清空 + ↺ 重置）
+        icon_font = p.font()
+        icon_font.setPixelSize(13)
+        p.setFont(icon_font)
+        if self._show_clear():
+            cr = self._clear_rect()
+            if self._clear_hovered:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#fee2e2"))
+                p.drawEllipse(cr)
+                p.setPen(QColor("#dc2626"))
+            else:
+                p.setPen(QColor("#c0c0c0"))
+            p.drawText(
+                cr,
+                Qt.AlignmentFlag.AlignCenter,
+                "×",
+            )
+        if self._show_reset():
+            rr = self._reset_rect()
+            if self._reset_hovered:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor("#dbeafe"))
+                p.drawEllipse(rr)
+                p.setPen(QColor("#2563eb"))
+            else:
+                p.setPen(QColor("#c0c0c0"))
+            p.drawText(
+                rr,
+                Qt.AlignmentFlag.AlignCenter,
+                "↺",
+            )
         p.end()
 
 
 class _ShortcutRow(QWidget):
-    """单行快捷键设置：标签 + 捕获框 + 重置按钮 + 冲突提示"""
+    """单行快捷键设置：标签 + 捕获框（内置重置）
+    冲突提示显示在行下方（红色小字，左侧对齐捕获框）
+    ★ v0.69: 重置按钮内置到捕获框 + 清空图标按钮"""
     changed = Signal()
 
     def __init__(self, label, default_key, parent=None):
         super().__init__(parent)
         self._default = default_key
-        self.setFixedHeight(34)
-        h = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        # ── 主行：标签 + 捕获框 ──
+        row = QWidget()
+        row.setFixedHeight(34)
+        h = QHBoxLayout(row)
         h.setContentsMargins(0, 3, 0, 3)
         h.setSpacing(8)
         lbl = QLabel(label)
@@ -1755,38 +1896,24 @@ class _ShortcutRow(QWidget):
             "background:transparent;"
         )
         h.addWidget(lbl)
-        self._edit = _ShortcutEdit()
+        self._edit = _ShortcutEdit(
+            default=default_key
+        )
         self._edit.set_value(default_key)
         self._edit.shortcut_changed.connect(
             lambda _: self.changed.emit()
         )
         h.addWidget(self._edit, stretch=1)
-        self._btn_reset = QPushButton("↺")
-        self._btn_reset.setFixedSize(28, 24)
-        self._btn_reset.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        self._btn_reset.setStyleSheet(
-            "QPushButton{background:transparent;"
-            "border:none;font-size:14px;"
-            "color:#9ca3af;border-radius:4px}"
-            "QPushButton:hover{"
-            "background:#f3f4f6;color:#374151}"
-            "QPushButton:pressed{background:#e5e7eb}"
-        )
-        self._btn_reset.clicked.connect(self._on_reset)
-        h.addWidget(self._btn_reset)
-        self._lbl_conflict = QLabel("冲突")
+        outer.addWidget(row)
+        # ── 冲突提示（行下方，左侧 padding 对齐捕获框）──
+        self._lbl_conflict = QLabel()
         self._lbl_conflict.setStyleSheet(
             "font-size:11px;color:#dc2626;"
             "background:transparent;"
+            "padding:0 0 2px 98px;"
         )
         self._lbl_conflict.hide()
-        h.addWidget(self._lbl_conflict)
-
-    def _on_reset(self):
-        self._edit.set_value(self._default)
-        self.changed.emit()
+        outer.addWidget(self._lbl_conflict)
 
     def value(self):
         return self._edit.value()
@@ -1794,12 +1921,14 @@ class _ShortcutRow(QWidget):
     def set_value(self, v):
         self._edit.set_value(v)
 
-    def set_conflict(self, conflict):
-        self._lbl_conflict.setVisible(conflict)
-        bg = "#fee2e2" if conflict else "transparent"
-        self.setStyleSheet(
-            f"background:{bg};border-radius:4px;"
-        )
+    def set_conflict(self, msg=""):
+        """msg 为空=无冲突，非空=冲突描述"""
+        has = bool(msg)
+        self._lbl_conflict.setVisible(has)
+        if has:
+            self._lbl_conflict.setText(msg)
+        self._edit._conflict = has
+        self._edit.update()
 # ═══════════════════════════════════════════
 # ★ 带三角箭头的自定义滚动条
 # ═══════════════════════════════════════════
@@ -1992,6 +2121,7 @@ class SettingsDialog(QDialog):
     font_size_changed = Signal(int)  # ★ v0.6 fix: 字号专用信号，不触发 rehighlight
     word_wrap_changed = Signal(bool)   # ★ v0.6: 自动换行开关
     max_lines_changed = Signal(int)    # ★ v0.6: 行数上限变更
+    show_line_numbers_changed = Signal(bool)  # ★ v0.69: 行号显示开关
 
     def __init__(self, config, tab_names, parent=None):
         super().__init__(parent)
@@ -2056,7 +2186,7 @@ class SettingsDialog(QDialog):
         # ── 内容区 ──
         content = QWidget()
         content_v = QVBoxLayout(content)
-        content_v.setContentsMargins(16, 4, 8, 14)
+        content_v.setContentsMargins(16, 4, 14, 14)
         content_v.setSpacing(0)
 
         body_h = QHBoxLayout()
@@ -2483,6 +2613,17 @@ class SettingsDialog(QDialog):
         )
         _hlc_v.addWidget(self._chk_wrap)
 
+        # ★ v0.69: 显示行号
+        self._chk_line_numbers = QCheckBox("显示行号")
+        self._chk_line_numbers.setStyleSheet(_CHK_SS)
+        self._chk_line_numbers.setChecked(
+            _hl_cfg.get("show_line_numbers", True)
+        )
+        self._chk_line_numbers.toggled.connect(
+            self._on_line_numbers_changed
+        )
+        _hlc_v.addWidget(self._chk_line_numbers)
+
         # ★ 行数上限
         ml_h = QHBoxLayout()
         ml_h.setSpacing(6)
@@ -2818,10 +2959,10 @@ class SettingsDialog(QDialog):
     def _build_shortcut_page(self):
         page = QWidget()
         v = QVBoxLayout(page)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(0, 0, 20, 0)
         v.setSpacing(4)
         lbl_hint = QLabel(
-            "点击快捷键框后，按下新的按键组合以修改"
+            "点击捕获框按新组合 · Del清空 · 右侧↺重置"
         )
         lbl_hint.setStyleSheet(
             "font-size:11px;color:#9ca3af;"
@@ -2846,30 +2987,100 @@ class SettingsDialog(QDialog):
                 self._on_shortcut_changed
             )
             v.addWidget(row)
+        # ★ v0.69: 内置快捷键参考（不可修改）
+        v.addSpacing(12)
+        sep_sc = QFrame()
+        sep_sc.setFixedHeight(2)
+        sep_sc.setStyleSheet("background: #e5e7eb;")
+        v.addWidget(sep_sc)
+        v.addSpacing(8)
+        lbl_ref = QLabel("内置快捷键（不可修改）")
+        lbl_ref.setStyleSheet(
+            "font-size:12px;color:#6b7280;"
+            "background:transparent;"
+            "font-weight:600;"
+        )
+        v.addWidget(lbl_ref)
+        _ref_ss = (
+            "font-size:11px;color:#6b7280;"
+            "background:transparent;"
+            "font-family:Consolas,monospace;"
+        )
+        _refs = [
+            ("Home", "跳到文档开头"),
+            ("End", "跳到最后一行（跳过空行）"),
+            ("PgUp / PgDn", "垂直翻页"),
+            ("Shift+PgUp/PgDn", "水平翻页"),
+            ("Ctrl+↑ / Ctrl+↓", "调整日志区字号"),
+            ("Ctrl+滚轮", "调整日志区字号"),
+            ("Shift+滚轮", "水平滚动"),
+        ]
+        for key, desc in _refs:
+            ref_h = QHBoxLayout()
+            ref_h.setContentsMargins(4, 1, 0, 1)
+            ref_h.setSpacing(8)
+            lbl_k = QLabel(key)
+            lbl_k.setFixedWidth(130)
+            lbl_k.setStyleSheet(_ref_ss)
+            ref_h.addWidget(lbl_k)
+            lbl_d = QLabel(desc)
+            lbl_d.setStyleSheet(
+                "font-size:11px;color:#9ca3af;"
+                "background:transparent;"
+            )
+            ref_h.addWidget(lbl_d, stretch=1)
+            v.addLayout(ref_h)
         v.addStretch(1)
         return page
 
+    # ★ v0.69: 内置快捷键表（keyPressEvent 实现，不可修改）
+    _BUILTIN_SHORTCUTS = {
+        "Home": "跳到文档开头",
+        "End": "跳到最后一行",
+        "PgUp": "垂直翻页",
+        "PgDown": "垂直翻页",
+        "Shift+PgUp": "水平翻页",
+        "Shift+PgDown": "水平翻页",
+        "Ctrl+Up": "调整字号",
+        "Ctrl+Down": "调整字号",
+    }
+
     def _on_shortcut_changed(self):
-        """冲突检测：多行相同快捷键时高亮提示"""
+        """冲突检测：自定义行互相重复 + 内置快捷键冲突"""
         rows = [
             self._sc_close_tab,
             self._sc_goto_line,
             self._sc_send,
         ]
         vals = [r.value() for r in rows]
+        builtin = self._BUILTIN_SHORTCUTS
         for i, row in enumerate(rows):
-            conflict = any(
-                vals[j] == vals[i] and j != i
+            v = vals[i]
+            if not v:
+                row.set_conflict("")
+                continue
+            # 1) 检查与其他自定义行重复
+            dup = any(
+                vals[j] == v and j != i
                 for j in range(len(rows))
                 if vals[j]
             )
-            row.set_conflict(conflict)
+            if dup:
+                row.set_conflict("与其他快捷键重复")
+                continue
+            # 2) 检查内置快捷键
+            if v in builtin:
+                row.set_conflict(
+                    f"内置: {builtin[v]}"
+                )
+                continue
+            row.set_conflict("")
         self._auto_save()
 
     def _build_other_page(self):
         page = QWidget()
         v = QVBoxLayout(page)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(0, 0, 20, 0)
         v.setSpacing(10)
         self._chk_confirm_clear = QCheckBox(
             "清空日志时显示确认提示"
@@ -2971,6 +3182,11 @@ class SettingsDialog(QDialog):
         self._auto_save()
         self.word_wrap_changed.emit(checked)
 
+    def _on_line_numbers_changed(self, checked):
+        """★ v0.69: 行号显示开关"""
+        self._auto_save()
+        self.show_line_numbers_changed.emit(checked)
+
     def _on_unlimited_toggled(self, checked):
         """★ v0.61: 无限制勾选 — 禁用 spinbox 并 emit 0"""
         self._max_lines_spin.setEnabled(not checked)
@@ -3044,6 +3260,7 @@ class SettingsDialog(QDialog):
                 0 if self._chk_unlimited.isChecked()
                 else self._max_lines_spin.value()
             ),
+            "show_line_numbers": self._chk_line_numbers.isChecked(),
             "builtin_rules": {},
             "user_rules": [],
         }
@@ -3207,6 +3424,9 @@ class SettingsDialog(QDialog):
             self._max_lines_spin.blockSignals(True)
             self._max_lines_spin.setValue(5000)
             self._max_lines_spin.blockSignals(False)
+            self._chk_line_numbers.blockSignals(True)
+            self._chk_line_numbers.setChecked(True)
+            self._chk_line_numbers.blockSignals(False)
             self._on_hl_changed()
         elif idx == 2:
             self._chk_confirm_clear.setChecked(True)
