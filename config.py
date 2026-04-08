@@ -38,7 +38,7 @@ _DEFAULT_CONFIG = {
         "record_all_tabs": True,
         "selected_tabs": [],
     },
-    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": True, "fg": "#d97706"}}, "user_rules": [], "word_wrap": False, "max_lines": 5000},
+    "highlight": {"enabled": True, "default_fg": "#1e293b", "builtin_rules": {"bracket": {"enabled": True, "fg": "#d97706"}}, "user_rules": [], "word_wrap": False, "max_lines": 5000, "show_line_numbers": True},
     # ★ v0.63: 快捷键配置
     "shortcuts": {
         "close_tab": "Ctrl+W",

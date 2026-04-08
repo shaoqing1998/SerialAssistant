@@ -1,5 +1,8 @@
 """
 filter_manager.py - 多 Tab 关键词过滤管理模块
+v0.67 — ★ 行号区域（_LineNumberArea）左侧显示
+        ★ set_line_numbers_visible 开关
+        ★ scrollContentsBy 同步行号滚动
 v0.6 — ★ 日志区默认字号 12pt + Ctrl+滚轮/箭头调字号
        ★ 右下角字号提示浮层（2秒后淡出）
        ★ FilteredLogView 绑定 LogHighlighter 高亮引擎
@@ -20,7 +23,7 @@ from PySide6.QtWidgets import (
     QLabel, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QRect, QPoint, QPointF, QRectF,
+    Qt, Signal, QRect, QPoint, QPointF, QRectF, QSize,
     QTimer, QPropertyAnimation, QEasingCurve,
 )
 from PySide6.QtGui import (
@@ -112,6 +115,29 @@ class _HoverIconBtn(QWidget):
             # 竖线
             p.drawLine(QPointF(12, 11), QPointF(12, 15))
         p.end()
+
+
+# ════════════════════════════════════════════
+# 行号区域
+# ════════════════════════════════════════════
+class _LineNumberArea(QWidget):
+    """行号区域 — 绘制在 FilteredLogView 左侧，点击选中对应行"""
+    def __init__(self, editor):
+        super().__init__(editor)
+        self._editor = editor
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def sizeHint(self):
+        return QSize(self._editor._line_number_width(), 0)
+
+    def paintEvent(self, event):
+        self._editor._paint_line_numbers(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._editor._select_line_at(
+                int(event.position().y())
+            )
 
 
 # ════════════════════════════════════════════
@@ -265,6 +291,14 @@ class FilteredLogView(RoundedContextTextEdit):
             self._hover_bar.hide
         )
 
+        # ★ v0.67: 行号区域
+        self._line_num_visible = True
+        self._line_num_area = _LineNumberArea(self)
+        self.document().blockCountChanged.connect(
+            self._update_line_number_width
+        )
+        self._update_line_number_width()
+
 
     def set_auto_scroll(self, v):
         self._auto_scroll = v
@@ -347,6 +381,7 @@ class FilteredLogView(RoundedContextTextEdit):
         font.setPointSize(size)
         self.setFont(font)
         self._update_stylesheet()
+        self._update_line_number_width()
 
     # ★ v0.6: 字号调节
     def _change_font_size(self, delta):
@@ -456,6 +491,99 @@ class FilteredLogView(RoundedContextTextEdit):
         y = vp.y() + 6
         self._hover_bar.move(x, y)
 
+    # ★ v0.67: 行号显示
+    def _line_number_width(self):
+        if not self._line_num_visible:
+            return 0
+        digits = len(str(max(1, self.document().blockCount())))
+        digits = max(digits, 3)  # 最少 3 位宽度
+        fw = self.fontMetrics().horizontalAdvance('9')
+        return fw * digits + 16
+
+    def _update_line_number_width(self, _count=0):
+        w = self._line_number_width()
+        self.setViewportMargins(w, 0, 0, 0)
+        self._update_line_number_geometry()
+
+    def _update_line_number_geometry(self):
+        cr = self.contentsRect()
+        w = self._line_number_width()
+        self._line_num_area.setGeometry(
+            cr.left(), cr.top(), w, cr.height()
+        )
+
+    def _paint_line_numbers(self, event):
+        if not self._line_num_visible:
+            return
+        painter = QPainter(self._line_num_area)
+        painter.setRenderHint(
+            QPainter.RenderHint.TextAntialiasing, True
+        )
+        area_w = self._line_num_area.width()
+        # 背景
+        painter.fillRect(event.rect(), QColor("#f8f9fa"))
+        # 右边框线
+        painter.setPen(QPen(QColor("#e5e7eb"), 1))
+        painter.drawLine(
+            area_w - 1, event.rect().top(),
+            area_w - 1, event.rect().bottom(),
+        )
+        # 行号文字
+        font = QFont(self.font())
+        painter.setFont(font)
+        painter.setPen(QColor("#9ca3af"))
+        # 找到第一个可见块
+        first_cursor = self.cursorForPosition(
+            QPoint(0, 0)
+        )
+        block = first_cursor.block()
+        for _ in range(3):
+            prev = block.previous()
+            if prev.isValid():
+                block = prev
+        vp_bottom = self.viewport().rect().bottom()
+        while block.isValid():
+            tc = QTextCursor(block)
+            cr = self.cursorRect(tc)
+            top = cr.top()
+            if top > vp_bottom:
+                break
+            if top + cr.height() >= 0:
+                painter.drawText(
+                    0, top, area_w - 8, cr.height(),
+                    (Qt.AlignmentFlag.AlignRight
+                     | Qt.AlignmentFlag.AlignVCenter),
+                    str(block.blockNumber() + 1),
+                )
+            block = block.next()
+        painter.end()
+
+    def set_line_numbers_visible(self, visible):
+        self._line_num_visible = visible
+        self._line_num_area.setVisible(visible)
+        self._update_line_number_width()
+
+    def _select_line_at(self, y):
+        """选中行号区域点击位置对应的整行"""
+        cursor = self.cursorForPosition(QPoint(0, y))
+        block = cursor.block()
+        if block.isValid():
+            tc = QTextCursor(block)
+            tc.movePosition(
+                QTextCursor.MoveOperation.StartOfBlock
+            )
+            tc.movePosition(
+                QTextCursor.MoveOperation.EndOfBlock,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            self.setTextCursor(tc)
+
+    def scrollContentsBy(self, dx, dy):
+        super().scrollContentsBy(dx, dy)
+        if (hasattr(self, '_line_num_area')
+                and self._line_num_area.isVisible()):
+            self._line_num_area.update()
+
     def wheelEvent(self, event):
         if (event.modifiers()
                 & Qt.KeyboardModifier.ControlModifier):
@@ -506,8 +634,10 @@ class FilteredLogView(RoundedContextTextEdit):
     def resizeEvent(self, event):
         if self._resize_frozen:
             QWidget.resizeEvent(self, event)
+            self._update_line_number_geometry()
             return
         super().resizeEvent(event)
+        self._update_line_number_geometry()
         # ★ NoWrap: viewport 变化时同步文档宽度
         if self._wrap_mode == self.LineWrapMode.NoWrap:
             self._adjust_doc_width()
@@ -555,6 +685,11 @@ class FilteredLogView(RoundedContextTextEdit):
             self._max_lines = config.get(
                 "highlight", {}
             ).get("max_lines", 5000)
+            # ★ v0.67: 同步行号显示
+            show_ln = config.get("highlight", {}).get(
+                "show_line_numbers", True
+            )
+            self.set_line_numbers_visible(show_ln)
         else:
             self._highlighter.set_enabled(False)
 
@@ -583,12 +718,17 @@ class FilteredLogView(RoundedContextTextEdit):
             self._max_lines = config.get(
                 "highlight", {}
             ).get("max_lines", 5000)
+            # ★ v0.67: 同步行号显示
+            show_ln = config.get("highlight", {}).get(
+                "show_line_numbers", True
+            )
+            self.set_line_numbers_visible(show_ln)
         else:
             self._highlighter.set_enabled(False)
 
     # ★ v0.62: Ctrl+G 跳转行号
     def goto_line(self, line_num):
-        """跳转到指定行号（1-based）"""
+        """跳转到指定行号（1-based），并选中整行"""
         doc = self.document()
         block = doc.findBlockByLineNumber(
             max(0, line_num - 1)
@@ -596,6 +736,13 @@ class FilteredLogView(RoundedContextTextEdit):
         if not block.isValid():
             block = doc.lastBlock()
         cursor = QTextCursor(block)
+        cursor.movePosition(
+            QTextCursor.MoveOperation.StartOfBlock
+        )
+        cursor.movePosition(
+            QTextCursor.MoveOperation.EndOfBlock,
+            QTextCursor.MoveMode.KeepAnchor,
+        )
         self.setTextCursor(cursor)
         # QTextEdit 没有 centerCursor，手动滚动居中
         self.ensureCursorVisible()
@@ -1116,6 +1263,14 @@ class FilterManager(QWidget):
                 v.setLineWrapMode(mode)
         self._write_paused = False
         self._flush_pending()
+
+    # ★ v0.67: 行号显示开关
+    def set_line_numbers_visible(self, visible):
+        """设置所有 Tab 行号可见性"""
+        for i in range(self._tabs.count()):
+            v = self._tabs.widget(i)
+            if isinstance(v, FilteredLogView):
+                v.set_line_numbers_visible(visible)
 
     # ★ v0.6: 最大行数更新
     def update_max_lines(self, n):
