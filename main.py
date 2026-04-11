@@ -1,11 +1,12 @@
 """
-main.py - 串口调试助手 v0.7
+main.py - 串口调试助手 v0.71
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
 ★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
 ★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
 ★ v0.5: 设置变更 → 刷新高亮
 ★ v0.6: closeEvent 先关闭所有打开的 QDialog
 ★ v0.7: import 路径重构 — 弹窗从 popups 导入
+★ v0.71: 工具栏（打开/保存/时间戳/搜索/跳转/换行/行号/HEX）
 """
 import sys
 import os
@@ -65,6 +66,7 @@ from theme import (
     SUCCESS,
 )
 from string import Template
+from toolbar import Toolbar
 
 
 _M = 10
@@ -494,10 +496,39 @@ class MainWindow(FramelessMainWindow):
         )
         self.addAction(self._act_send)
         self._rebind_shortcuts()
+        # ★ v0.71: 初始化工具栏 toggle 状态
+        #   直接读 self._cfg（已由 load_config
+        #   deep_merge 保证所有 key 存在，
+        #   默认值统一在 config._DEFAULT_CONFIG）
+        hl = self._cfg["highlight"]
+        self._toolbar.set_word_wrap(
+            hl["word_wrap"]
+        )
+        self._toolbar.set_line_numbers(
+            hl["show_line_numbers"]
+        )
+        # ★ v0.71: Ctrl+O 打开文件
+        self._act_open = QAction(self)
+        self._act_open.setShortcut(
+            QKeySequence("Ctrl+O")
+        )
+        self._act_open.triggered.connect(
+            self._on_open_file
+        )
+        self.addAction(self._act_open)
+        # ★ v0.71: Ctrl+F 搜索
+        self._act_find = QAction(self)
+        self._act_find.setShortcut(
+            QKeySequence("Ctrl+F")
+        )
+        self._act_find.triggered.connect(
+            self._on_search
+        )
+        self.addAction(self._act_find)
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.7")
+        self.setWindowTitle("串口调试助手  v0.71")
         tb = self.titleBar
         tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)
@@ -556,6 +587,8 @@ class MainWindow(FramelessMainWindow):
         vbox.setContentsMargins(_M, 36, _M, 4)
         vbox.setSpacing(4)
         vbox.addWidget(self._make_toolbar())
+        self._toolbar = Toolbar()
+        vbox.addWidget(self._toolbar)
         self._filter_mgr = FilterManager(
             self._cfg,
             h_margin=0,
@@ -664,34 +697,9 @@ class MainWindow(FramelessMainWindow):
         grid.setColumnMinimumWidth(0, 84)
         grid.setColumnStretch(2, 1)
         ROW_H = 28
-        for r in range(4):
+        for r in range(1, 4):
             grid.setRowMinimumHeight(r, ROW_H)
-        self._chk_ts = QCheckBox("时间戳")
-        self._spin_ts = QSpinBox()
-        self._spin_ts.setRange(10, 9999)
-        self._spin_ts.setValue(100)
-        self._spin_ts.setFixedWidth(SPIN_W)
-        self._spin_ts.setEnabled(False)
-        self._spin_ts.setToolTip(
-            "超时时间：超过此时间无数据则换行"
-        )
-        lbl_ts = QLabel("ms")
-        lbl_ts.setStyleSheet(
-            "color:#9ca3af;font-size:14px;"
-        )
-        grid.addWidget(
-            self._chk_ts, 0, 0,
-            Qt.AlignmentFlag.AlignVCenter
-            | Qt.AlignmentFlag.AlignLeft,
-        )
-        grid.addWidget(
-            self._spin_ts, 0, 1,
-            Qt.AlignmentFlag.AlignVCenter,
-        )
-        grid.addWidget(
-            lbl_ts, 0, 2,
-            Qt.AlignmentFlag.AlignVCenter,
-        )
+        # v0.71: 时间戳/超时已移至工具栏
         self._chk_loop = QCheckBox("循环发送")
         self._spin_ms = QSpinBox()
         self._spin_ms.setRange(50, 99999)
@@ -715,13 +723,8 @@ class MainWindow(FramelessMainWindow):
             lbl_ms, 1, 2,
             Qt.AlignmentFlag.AlignVCenter,
         )
-        self._chk_hex_rx = QCheckBox("HEX 显示")
+        # v0.71: HEX 显示已移至工具栏
         self._chk_hex_tx = QCheckBox("HEX 发送")
-        grid.addWidget(
-            self._chk_hex_rx, 2, 0,
-            Qt.AlignmentFlag.AlignVCenter
-            | Qt.AlignmentFlag.AlignLeft,
-        )
         grid.addWidget(
             self._chk_hex_tx, 2, 1, 1, 2,
             Qt.AlignmentFlag.AlignVCenter
@@ -953,6 +956,9 @@ class MainWindow(FramelessMainWindow):
         dlg.word_wrap_changed.connect(
             lambda on: self._filter_mgr.update_word_wrap(on)
         )
+        dlg.word_wrap_changed.connect(
+            self._toolbar.set_word_wrap
+        )
         # ★ v0.6: 最大行数走专用通路
         dlg.max_lines_changed.connect(
             lambda n: self._filter_mgr.update_max_lines(n)
@@ -960,6 +966,9 @@ class MainWindow(FramelessMainWindow):
         # ★ v0.69: 行号显示开关
         dlg.show_line_numbers_changed.connect(
             lambda v: self._filter_mgr.set_line_numbers_visible(v)
+        )
+        dlg.show_line_numbers_changed.connect(
+            self._toolbar.set_line_numbers
         )
         dlg.exec()
         # ★ v0.6: 设置关闭后只更新配置，不 rehighlight 已有日志
@@ -999,6 +1008,27 @@ class MainWindow(FramelessMainWindow):
         )
         self._lbl_log_err.show()
         QTimer.singleShot(5000, self._lbl_log_err.hide)
+
+    # ── ★ v0.71: 工具栏回调 ───────────────
+    def _on_open_file(self):
+        """工具栏 → 打开日志文件（占位）"""
+        InfoPopup(
+            "打开文件功能开发中…", self
+        ).exec()
+
+    def _on_toolbar_save_as(self):
+        """工具栏 → 另存为当前 Tab"""
+        idx = self._filter_mgr._tabs.currentIndex()
+        name = self._filter_mgr._tabs.tabText(
+            idx
+        ).strip()
+        self._save_as_tab(name)
+
+    def _on_search(self):
+        """工具栏 → 搜索（占位）"""
+        InfoPopup(
+            "搜索功能开发中…", self
+        ).exec()
 
     def _save_as_tab(self, tab_name):
         content = self._filter_mgr.get_tab_content(
@@ -1042,12 +1072,7 @@ class MainWindow(FramelessMainWindow):
         self._btn_conn.clicked.connect(self._toggle_conn)
         self._btn_send.clicked.connect(self._do_send)
         self._btn_clear.clicked.connect(self._on_clear)
-        self._chk_hex_rx.toggled.connect(
-            self._filter_mgr.set_show_hex
-        )
-        self._chk_ts.toggled.connect(
-            self._spin_ts.setEnabled
-        )
+        # v0.71: HEX显示/时间戳已移至工具栏
         self._chk_loop.toggled.connect(
             self._spin_ms.setEnabled
         )
@@ -1066,6 +1091,30 @@ class MainWindow(FramelessMainWindow):
         )
         self._filter_mgr.set_save_as_callback(
             self._save_as_tab
+        )
+        # ★ v0.71: 工具栏信号
+        self._toolbar.open_file_clicked.connect(
+            self._on_open_file
+        )
+        self._toolbar.save_as_clicked.connect(
+            self._on_toolbar_save_as
+        )
+        self._toolbar.search_clicked.connect(
+            self._on_search
+        )
+        self._toolbar.goto_line_clicked.connect(
+            self._on_goto_line
+        )
+        self._toolbar.hex_display_toggled.connect(
+            self._filter_mgr.set_show_hex
+        )
+        self._toolbar.word_wrap_toggled.connect(
+            lambda on: self._filter_mgr
+                .update_word_wrap(on)
+        )
+        self._toolbar.line_numbers_toggled.connect(
+            lambda v: self._filter_mgr
+                .set_line_numbers_visible(v)
         )
         # ★ v0.62: hover 按钮 + 关闭 Tab 信号
         self._filter_mgr.tab_close_requested.connect(
@@ -1327,16 +1376,36 @@ class MainWindow(FramelessMainWindow):
             )
 
     def _on_rx(self, data):
-        if self._chk_ts.isChecked():
+        # ★ v0.71: 双时间戳（连接计时 + 当前时钟）
+        el = self._toolbar.btn_elapsed.isChecked()
+        ck = self._toolbar.btn_clock.isChecked()
+        if el or ck:
             try:
-                ts = datetime.now().strftime(
-                    "[%H:%M:%S.%f"
-                )[:-3] + "] "
+                pfx = ""
+                if el and self._start_time:
+                    t = (
+                        datetime.now()
+                        - self._start_time
+                    ).total_seconds()
+                    hh = int(t // 3600)
+                    mm = int((t % 3600) // 60)
+                    ss = int(t % 60)
+                    ms = int((t * 1000) % 1000)
+                    pfx += (
+                        f"[{hh:02d}:{mm:02d}:"
+                        f"{ss:02d}.{ms:03d}] "
+                    )
+                if ck:
+                    pfx += (
+                        datetime.now().strftime(
+                            "[%H:%M:%S.%f"
+                        )[:-3] + "] "
+                    )
                 txt = data.decode(
                     "utf-8", errors="replace"
                 )
                 data = "\n".join(
-                    (ts + l) if l else l
+                    (pfx + l) if l else l
                     for l in txt.split("\n")
                 ).encode()
             except Exception:

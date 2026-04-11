@@ -94,6 +94,8 @@ SEPARATOR_HEIGHT = 2         # 分隔线高度
 SEPARATOR_SPACING = 12       # 分隔线上下间距
 CLOSE_BTN_SIZE = 28          # 关闭按钮尺寸
 CLOSE_BTN_HOVER_RADIUS = 11  # 关闭按钮 hover 圆圈半径
+TOOLBAR_BTN_SIZE = 26        # 工具栏按钮边长
+TOOLBAR_ICON_SIZE = 14       # 工具栏图标绘制区域
 
 
 # ════════════════════════════════════════════
