@@ -1,6 +1,6 @@
 """
 filter_manager.py - 多 Tab 关键词过滤管理模块
-v0.67 — ★ 行号区域（_LineNumberArea）左侧显示
+v0.7 — ★ 行号区域（_LineNumberArea）左侧显示
         ★ set_line_numbers_visible 开关
         ★ scrollContentsBy 同步行号滚动
 v0.6 — ★ 日志区默认字号 12pt + Ctrl+滚轮/箭头调字号
@@ -35,6 +35,16 @@ from rounded_menu import (
     RoundedContextLineEdit,
 )
 from highlight_engine import LogHighlighter
+
+# ★ v0.7: 从 theme 导入设计常量
+from theme import (
+    PRIMARY, PRIMARY_HOVER, PRIMARY_LIGHT,
+    BG_PANEL, BG_HOVER, BG_PRESSED, BG_LINE_NUM,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, TEXT_LOG,
+    BORDER_DEFAULT, BORDER_FOCUS, BORDER_LIGHT,
+    ERROR, SUCCESS,
+    TX_COLOR, RX_COLOR,
+)
 
 
 # ════════════════════════════════════════════
@@ -78,9 +88,9 @@ class _HoverIconBtn(QWidget):
         r = QRectF(0, 0, 24, 24)
         # 背景圆
         if self._pressed:
-            bg = QColor("#dbeafe")
+            bg = QColor(PRIMARY_LIGHT)
         elif self._hovered:
-            bg = QColor("#f3f4f6")
+            bg = QColor(BG_HOVER)
         else:
             bg = QColor(255, 255, 255, 0)
         path = QPainterPath()
@@ -88,11 +98,11 @@ class _HoverIconBtn(QWidget):
         p.fillPath(path, bg)
         # 图标线条
         if self._pressed:
-            pen_c = QColor("#2563eb")
+            pen_c = QColor(PRIMARY)
         elif self._hovered:
-            pen_c = QColor("#374151")
+            pen_c = QColor(TEXT_PRIMARY)
         else:
-            pen_c = QColor("#9ca3af")
+            pen_c = QColor(TEXT_MUTED)
         p.setPen(QPen(pen_c, 1.6, Qt.PenStyle.SolidLine,
                        Qt.PenCapStyle.RoundCap))
         cx, cy = 12.0, 12.0
@@ -537,9 +547,9 @@ class FilteredLogView(RoundedContextTextEdit):
         )
         area_w = self._line_num_area.width()
         # 背景
-        painter.fillRect(event.rect(), QColor("#f8f9fa"))
+        painter.fillRect(event.rect(), QColor(BG_LINE_NUM))
         # 右边框线
-        painter.setPen(QPen(QColor("#e5e7eb"), 1))
+        painter.setPen(QPen(QColor(BORDER_LIGHT), 1))
         painter.drawLine(
             area_w - 1, event.rect().top(),
             area_w - 1, event.rect().bottom(),
@@ -547,7 +557,7 @@ class FilteredLogView(RoundedContextTextEdit):
         # 行号文字
         font = QFont(self.font())
         painter.setFont(font)
-        painter.setPen(QColor("#9ca3af"))
+        painter.setPen(QColor(TEXT_MUTED))
         # 找到第一个可见块
         first_cursor = self.cursorForPosition(
             QPoint(0, 0)
@@ -830,7 +840,7 @@ class FilteredLogView(RoundedContextTextEdit):
 # ════════════════════════════════════════════
 _BLUE_LINE_W = 20
 _BLUE_LINE_H = 2
-_BLUE_COLOR = QColor("#2563eb")
+_BLUE_COLOR = QColor(PRIMARY)
 _PLUS_DATA = "__plus__"
 
 # ★ v0.42: 右键菜单字号已移至 rounded_menu.py 全局控制，不再需要局部覆盖
@@ -1221,7 +1231,7 @@ class FilterManager(QWidget):
             if self._show_hex
             else FilteredLogView.to_text(data)
         )
-        self._dispatch(text, "#1a6b3a")
+        self._dispatch(text, RX_COLOR)
 
     def append_sent(self, data):
         text = (
@@ -1229,13 +1239,13 @@ class FilterManager(QWidget):
             if self._show_hex
             else FilteredLogView.to_text(data)
         )
-        self._dispatch("[TX] " + text, "#92400e")
+        self._dispatch("[TX] " + text, TX_COLOR)
 
     def append_info(self, msg):
-        self._dispatch(f"[INFO] {msg}\n", "#6b7280")
+        self._dispatch(f"[INFO] {msg}\n", TEXT_SECONDARY)
 
     def append_error(self, msg):
-        self._dispatch(f"[ERROR] {msg}\n", "#dc2626")
+        self._dispatch(f"[ERROR] {msg}\n", ERROR)
 
     def clear_current(self):
         v = self._tabs.currentWidget()

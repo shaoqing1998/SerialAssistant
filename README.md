@@ -7,6 +7,15 @@
 
 ## 版本历史
 
+### v0.7 — 代码架构重构（模块化拆分）
+
+- 新增 `theme.py`：统一设计常量管理（颜色、字号、间距、stylesheet 生成函数）
+- 新增 `widgets.py`：公共 UI 组件提取（CloseBtn、CircleBtn、NavBtn、ResetBtn、TagChip、GearIconLabel、ArrowScrollBar、RoundedScrollContainer）
+- 新增 `popups.py`：弹窗组件提取（InfoPopup、ConfirmPopup、InputIntPopup、InputTextPopup）
+- `settings_dialog.py` 瘦身：删除已迁移的 12 个类和 10+ 常量，改为 import 引用
+- 所有 × 关闭按钮统一为 drawLine 实现（消除 drawText vs drawLine 不一致）
+- 建立统一设计原则：新代码必须引用公共模块，禁止裸写魔法字符串
+
 ### v0.69 — 快捷键设置 UI 完善 + 冲突检测
 
 - 快捷键捕获控件（_ShortcutEdit）：点击进入捕获模式，按键组合自动识别并显示
@@ -290,7 +299,10 @@
 SerialAssistant/
 ├── main.py              # 主入口、主窗口 UI、全局样式
 ├── title_bar.py         # 标题栏组件（SVG 齿轮按钮 + 自定义 min/max/close）
-├── settings_dialog.py   # 通用设置弹窗（全屏遮罩 + 日志/高亮设置页）
+├── theme.py             # ★ v0.7 设计常量（颜色/字号/间距/stylesheet）
+├── widgets.py           # ★ v0.7 公共 UI 组件（CloseBtn/NavBtn/TagChip 等）
+├── popups.py            # ★ v0.7 弹窗组件（InfoPopup/ConfirmPopup 等）
+├── settings_dialog.py   # 设置弹窗（高亮规则 + 快捷键 + SettingsDialog 主类）
 ├── highlight_engine.py  # ★ 关键词高亮引擎（9 内置规则 + 自定义规则）
 ├── color_picker.py      # ★ 色板弹窗（HSV 色盘 + HEX 输入 + 最近色）
 ├── filter_manager.py    # 过滤器管理（多 Tab 过滤 + 关键词匹配 + 高亮绑定）

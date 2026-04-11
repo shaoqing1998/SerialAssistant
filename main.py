@@ -1,10 +1,11 @@
 """
-main.py - 串口调试助手 v0.63
+main.py - 串口调试助手 v0.7
 ★ pyqt-frameless-window 库（Win11 原生按钮 + 窗口阴影）
 ★ 覆盖库 min/max/close 按钮 paintEvent（圆润 Notion 风格）
 ★ Snap Layout 通过 nativeEvent 覆写实现（库官方方案）
 ★ v0.5: 设置变更 → 刷新高亮
 ★ v0.6: closeEvent 先关闭所有打开的 QDialog
+★ v0.7: import 路径重构 — 弹窗从 popups 导入
 """
 import sys
 import os
@@ -45,10 +46,25 @@ from title_bar import (
     customize_titlebar_buttons,
 )
 from log_manager import LogManager
-from settings_dialog import (
-    SettingsDialog, InfoPopup, ConfirmPopup,
+from settings_dialog import SettingsDialog
+from popups import (
+    InfoPopup, ConfirmPopup,
     InputIntPopup, InputTextPopup,
 )
+from theme import (
+    BG_MAIN, TEXT_DARK, TEXT_PRIMARY,
+    TEXT_SECONDARY, TEXT_MUTED, TEXT_DISABLED,
+    TEXT_LOG, TEXT_ARROW,
+    BG_PANEL, BG_HOVER, BG_PRESSED,
+    BORDER_DEFAULT, BORDER_FOCUS, BORDER_LIGHT,
+    PRIMARY, PRIMARY_HOVER, PRIMARY_PRESSED,
+    PRIMARY_LIGHT, PRIMARY_BG,
+    ERROR,
+    SEND_BTN, SEND_BTN_HOVER, SEND_BTN_PRESSED,
+    TX_COLOR, RX_COLOR,
+    SUCCESS,
+)
+from string import Template
 
 
 _M = 10
@@ -90,34 +106,36 @@ class _BaudComboBox(QComboBox):
         )
 
 
-STYLE = """
+# ★ v0.7: 用 string.Template ($var) 代替 f-string，
+#   避免 CSS 花括号 {} 与 Python f-string {} 冲突。
+_STYLE_TPL = Template("""
 * { outline: none; }
 QMainWindow, QWidget#AppRoot {
-    background-color: #eef0f3;
-    color: #1f2937;
+    background-color: $BG_MAIN;
+    color: $TEXT_DARK;
     font-family: "Microsoft YaHei UI", "PingFang SC",
                  "Segoe UI", sans-serif;
     font-size: 14px;
 }
 QWidget {
-    color: #1f2937;
+    color: $TEXT_DARK;
     font-family: "Microsoft YaHei UI", "PingFang SC",
                  "Segoe UI", sans-serif;
     font-size: 14px;
 }
 QComboBox {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
     border-radius: 6px;
     padding: 0 8px 0 8px;
     min-height: 30px;
-    color: #1f2937;
+    color: $TEXT_DARK;
     font-size: 14px;
-    selection-background-color: #dbeafe;
+    selection-background-color: $PRIMARY_LIGHT;
 }
-QComboBox:hover  { background: #f3f4f6;
-                   border-color: #9ca3af; }
-QComboBox:focus  { border-color: #3b82f6; }
+QComboBox:hover  { background: $BG_HOVER;
+                   border-color: $TEXT_MUTED; }
+QComboBox:focus  { border-color: $BORDER_FOCUS; }
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: center right;
@@ -132,61 +150,61 @@ QComboBox::down-arrow {
         " fill='%236b7280'/></svg>");
 }
 QComboBox QAbstractItemView {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
     border-radius: 6px;
-    selection-background-color: #dbeafe;
-    selection-color: #1d4ed8;
+    selection-background-color: $PRIMARY_LIGHT;
+    selection-color: $PRIMARY_PRESSED;
     padding: 2px; outline: none;
 }
 QPushButton {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
     border-radius: 6px;
-    color: #374151; font-size: 14px;
+    color: $TEXT_PRIMARY; font-size: 14px;
     padding: 0 12px;
     min-height: 30px; min-width: 52px;
 }
 QPushButton:hover {
     background: #f0f4ff;
-    border-color: #93c5fd; color: #1d4ed8;
+    border-color: #93c5fd; color: $PRIMARY_PRESSED;
 }
-QPushButton:pressed { background: #dbeafe; }
+QPushButton:pressed { background: $PRIMARY_LIGHT; }
 QPushButton:disabled {
-    background: #f3f4f6;
-    border-color: #e5e7eb; color: #d1d5db;
+    background: $BG_HOVER;
+    border-color: $BORDER_LIGHT; color: $BORDER_DEFAULT;
 }
 QPushButton#BtnConnect {
-    background: #2563eb; border: none;
+    background: $PRIMARY; border: none;
     border-radius: 6px; color: #fff;
     font-weight: 600; min-height: 30px;
     min-width: 82px; padding: 0 14px;
 }
-QPushButton#BtnConnect:hover { background: #3b82f6; }
-QPushButton#BtnConnect:pressed { background: #1d4ed8; }
+QPushButton#BtnConnect:hover { background: $PRIMARY_HOVER; }
+QPushButton#BtnConnect:pressed { background: $PRIMARY_PRESSED; }
 QPushButton#BtnDisconnect {
-    background: #6b7280; border: none;
+    background: $TEXT_SECONDARY; border: none;
     border-radius: 6px; color: #fff;
     font-weight: 600; min-height: 30px;
     min-width: 82px; padding: 0 14px;
 }
-QPushButton#BtnDisconnect:hover { background: #9ca3af; }
+QPushButton#BtnDisconnect:hover { background: $TEXT_MUTED; }
 QPushButton#BtnDisconnect:pressed { background: #4b5563; }
 QPushButton#BtnSend {
-    background: #16a34a; border: none;
+    background: $SEND_BTN; border: none;
     border-radius: 6px; color: #fff;
     font-weight: 600; padding: 0;
     min-height: 0; min-width: 0;
 }
-QPushButton#BtnSend:hover { background: #22c55e; }
-QPushButton#BtnSend:pressed { background: #15803d; }
+QPushButton#BtnSend:hover { background: $SEND_BTN_HOVER; }
+QPushButton#BtnSend:pressed { background: $SEND_BTN_PRESSED; }
 QPushButton#BtnSend:disabled {
     background: #d1fae5; color: #6ee7b7; border: none;
 }
 QPushButton#BtnClear {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    border-radius: 6px; color: #6b7280;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
+    border-radius: 6px; color: $TEXT_SECONDARY;
     padding: 0; min-height: 0; min-width: 0;
 }
 QPushButton#BtnClear:hover {
@@ -194,9 +212,9 @@ QPushButton#BtnClear:hover {
     border-color: #fbbf24; color: #b45309;
 }
 QPushButton#BtnRefilter {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
-    border-radius: 6px; color: #374151;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
+    border-radius: 6px; color: $TEXT_PRIMARY;
     min-height: 28px; padding: 0 10px;
     font-size: 13px;
 }
@@ -205,30 +223,30 @@ QPushButton#BtnRefilter:hover {
     border-color: #c084fc; color: #7c3aed;
 }
 QPushButton#BtnRefilter:disabled {
-    background: #f3f4f6;
-    border-color: #e5e7eb; color: #d1d5db;
+    background: $BG_HOVER;
+    border-color: $BORDER_LIGHT; color: $BORDER_DEFAULT;
 }
 QPushButton#BtnToggleSend {
     background: transparent; border: none;
-    border-radius: 4px; color: #9ca3af;
+    border-radius: 4px; color: $TEXT_MUTED;
     font-size: 15px;
     min-width: 30px; max-width: 30px;
     min-height: 30px; max-height: 30px;
     padding: 0;
 }
 QPushButton#BtnToggleSend:hover {
-    background: #e5e7eb; color: #2563eb;
+    background: $BG_PRESSED; color: $PRIMARY;
 }
 QPushButton#BtnTabClose {
     background: transparent; border: none;
-    border-radius: 3px; color: #d1d5db;
+    border-radius: 3px; color: $BORDER_DEFAULT;
     font-size: 12px; font-weight: 700;
     min-width: 14px; max-width: 14px;
     min-height: 14px; max-height: 14px;
     padding: 0;
 }
 QPushButton#BtnTabClose:hover {
-    background: #fee2e2; color: #dc2626;
+    background: #fee2e2; color: $ERROR;
 }
 QTabWidget { background: transparent; border: none; }
 QTabWidget::pane {
@@ -240,7 +258,7 @@ QTabBar {
     qproperty-drawBase: 0;
 }
 QTabBar::tab {
-    background: transparent; color: #6b7280;
+    background: transparent; color: $TEXT_SECONDARY;
     border: none;
     border-bottom: 2px solid transparent;
     padding: 6px 0px 6px 0px;
@@ -248,14 +266,14 @@ QTabBar::tab {
     min-width: 0px; font-size: 13px;
 }
 QTabBar::tab:selected {
-    color: #2563eb;
+    color: $PRIMARY;
     border-bottom: 2px solid transparent;
     font-weight: 600;
 }
-QTabBar::tab:hover:!selected { color: #3b82f6; }
+QTabBar::tab:hover:!selected { color: $PRIMARY_HOVER; }
 QTextEdit {
-    background: #ffffff; color: #1e293b;
-    border: 1px solid #e5e7eb;
+    background: $BG_PANEL; color: $TEXT_LOG;
+    border: 1px solid $BORDER_LIGHT;
     border-radius: 6px;
     selection-background-color: #bfdbfe;
     selection-color: #1e3a8a;
@@ -264,69 +282,69 @@ QTextEdit {
 }
 QWidget#FilterBar { background: transparent; }
 QLineEdit#KwEdit {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
     border-radius: 6px; padding: 0 9px;
     min-height: 28px;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 13px; color: #1f2937;
+    font-size: 13px; color: $TEXT_DARK;
 }
-QLineEdit#KwEdit:focus { border-color: #3b82f6; }
+QLineEdit#KwEdit:focus { border-color: $BORDER_FOCUS; }
 QLineEdit#KwEdit:disabled {
-    background: #f3f4f6; color: #d1d5db;
-    border-color: #e5e7eb;
+    background: $BG_HOVER; color: $BORDER_DEFAULT;
+    border-color: $BORDER_LIGHT;
 }
 QTextEdit#SendEdit {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_LIGHT;
     border-radius: 6px;
     font-family: "Consolas", "Courier New", monospace;
-    font-size: 13px; color: #1f2937;
+    font-size: 13px; color: $TEXT_DARK;
     padding: 4px 6px;
 }
-QTextEdit#SendEdit:focus { border-color: #3b82f6; }
+QTextEdit#SendEdit:focus { border-color: $BORDER_FOCUS; }
 QCheckBox {
-    color: #374151; spacing: 5px;
+    color: $TEXT_PRIMARY; spacing: 5px;
     font-size: 13px; background: transparent;
 }
 QCheckBox::indicator {
     width: 14px; height: 14px;
-    border: 1.5px solid #9ca3af;
-    border-radius: 3px; background: #ffffff;
+    border: 1.5px solid $TEXT_MUTED;
+    border-radius: 3px; background: $BG_PANEL;
 }
 QCheckBox::indicator:checked {
-    background: #2563eb; border-color: #2563eb;
+    background: $PRIMARY; border-color: $PRIMARY;
 }
-QCheckBox::indicator:hover { border-color: #3b82f6; }
-QCheckBox:disabled { color: #d1d5db; }
+QCheckBox::indicator:hover { border-color: $PRIMARY_HOVER; }
+QCheckBox:disabled { color: $TEXT_DISABLED; }
 QCheckBox::indicator:disabled {
-    background: #f3f4f6; border-color: #e5e7eb;
+    background: $BG_HOVER; border-color: $BORDER_LIGHT;
 }
-QLabel { color: #374151; background: transparent; }
-QLabel#DotOn  { color: #16a34a; font-size: 14px; }
-QLabel#DotOff { color: #d1d5db; font-size: 14px; }
+QLabel { color: $TEXT_PRIMARY; background: transparent; }
+QLabel#DotOn  { color: $SUCCESS; font-size: 14px; }
+QLabel#DotOff { color: $BORDER_DEFAULT; font-size: 14px; }
 QStatusBar {
-    background: #eef0f3; color: #6b7280;
+    background: $BG_MAIN; color: $TEXT_SECONDARY;
     font-size: 13px; border: none;
     min-height: 24px;
 }
 QStatusBar::item { border: none; }
 QStatusBar QLabel {
-    color: #6b7280; padding: 0 6px;
+    color: $TEXT_SECONDARY; padding: 0 6px;
     font-size: 13px; background: transparent;
     border: none;
 }
 QSpinBox {
-    background: #ffffff;
-    border: 1px solid #d1d5db;
+    background: $BG_PANEL;
+    border: 1px solid $BORDER_DEFAULT;
     border-radius: 6px; padding: 0 4px;
-    min-height: 26px; color: #1f2937;
+    min-height: 26px; color: $TEXT_DARK;
     font-size: 13px;
 }
-QSpinBox:focus { border-color: #3b82f6; }
+QSpinBox:focus { border-color: $BORDER_FOCUS; }
 QSpinBox:disabled {
-    background: #f3f4f6; color: #d1d5db;
-    border-color: #e5e7eb;
+    background: $BG_HOVER; color: $TEXT_DISABLED;
+    border-color: $BORDER_LIGHT;
 }
 QSpinBox::up-button, QSpinBox::down-button {
     width: 14px; border: none;
@@ -340,17 +358,32 @@ QScrollBar:horizontal {
 }
 QScrollBar::handle:vertical,
 QScrollBar::handle:horizontal {
-    background: #d1d5db; border-radius: 3px;
+    background: $BORDER_DEFAULT; border-radius: 3px;
     min-height: 20px;
 }
 QScrollBar::handle:vertical:hover,
 QScrollBar::handle:horizontal:hover {
-    background: #3b82f6;
+    background: $BORDER_FOCUS;
 }
 QScrollBar::add-line, QScrollBar::sub-line {
     width: 0; height: 0;
 }
-"""
+""")
+
+STYLE = _STYLE_TPL.substitute(
+    BG_MAIN=BG_MAIN, TEXT_DARK=TEXT_DARK,
+    TEXT_PRIMARY=TEXT_PRIMARY, TEXT_SECONDARY=TEXT_SECONDARY,
+    TEXT_MUTED=TEXT_MUTED, TEXT_DISABLED=TEXT_DISABLED,
+    TEXT_LOG=TEXT_LOG, BG_PANEL=BG_PANEL,
+    BG_HOVER=BG_HOVER, BG_PRESSED=BG_PRESSED,
+    BORDER_DEFAULT=BORDER_DEFAULT, BORDER_FOCUS=BORDER_FOCUS,
+    BORDER_LIGHT=BORDER_LIGHT,
+    PRIMARY=PRIMARY, PRIMARY_HOVER=PRIMARY_HOVER,
+    PRIMARY_PRESSED=PRIMARY_PRESSED, PRIMARY_LIGHT=PRIMARY_LIGHT,
+    ERROR=ERROR, SUCCESS=SUCCESS,
+    SEND_BTN=SEND_BTN, SEND_BTN_HOVER=SEND_BTN_HOVER,
+    SEND_BTN_PRESSED=SEND_BTN_PRESSED,
+)
 
 
 class _WinCloseFilter(QAbstractNativeEventFilter):
@@ -442,17 +475,20 @@ class MainWindow(FramelessMainWindow):
         )
         # ★ v0.63: 动态快捷键（从配置读取）
         self._act_close_tab = QAction(self)
+        self._act_close_tab.setObjectName("sc_close_tab")
         self._act_close_tab.triggered.connect(
             lambda: self._filter_mgr
                 .request_close_current_tab()
         )
         self.addAction(self._act_close_tab)
         self._act_goto_line = QAction(self)
+        self._act_goto_line.setObjectName("sc_goto_line")
         self._act_goto_line.triggered.connect(
             self._on_goto_line
         )
         self.addAction(self._act_goto_line)
         self._act_send = QAction(self)
+        self._act_send.setObjectName("sc_send")
         self._act_send.triggered.connect(
             self._do_send
         )
@@ -461,7 +497,7 @@ class MainWindow(FramelessMainWindow):
 
     # ── ★ 标题栏配置 ─────────────────────
     def _setup_title_bar(self):
-        self.setWindowTitle("串口调试助手  v0.63")
+        self.setWindowTitle("串口调试助手  v0.7")
         tb = self.titleBar
         tb.setFixedHeight(32)
         tb.setAutoFillBackground(True)

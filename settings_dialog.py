@@ -1,56 +1,16 @@
 """
 settings_dialog.py - 通用设置弹窗（全屏遮罩 + 居中面板）
-v0.5 — ★ 新增「字体」设置页（预览行 + 内置规则 + 自定义规则）
-       ★ 拖动排序 + Ctrl 多选 + 右键批量修改颜色
-       ★ ColorPickerPopup 色板弹窗集成
+v0.7 — ★ 重构：提取公共组件到 theme.py / widgets.py / popups.py
+       ★ 本文件保留：高亮规则组件 + 快捷键组件 + SettingsDialog 主类
 
-最近更改 (2026-03-21):
-  [1] _BuiltinRuleRow: 新增 self._cs = QCheckBox("Aa") 区分大小写选项
-      → get_config() 输出 case_sensitive, reset() 重置为 False
-      → override 加载 case_sensitive
-  [2] _CustomRuleRow: 新增 self._cs = QCheckBox("Aa") 区分大小写选项
-      → get_data() 输出 case_sensitive, 构造函数加载 case_sensitive
-  [3] changed Signal 连接统一用 lambda _: self.changed.emit()
-  [4] 默认字体颜色 default_fg 色块按钮 + _build_hl_config 输出 default_fg
-  [5] 双击内置规则名称 → 就地显示正则, 点击任意位置还原
-  [6] _BuiltinRuleRow: 所有规则统一添加背景色按钮（无默认bg用#ffffff）
-  [7] _build_highlight_page: 内置规则上方添加表头行（启用/名称/Aa/字色/背景）
-  [8] 删除设置窗内所有 QToolTip（规避 WA_TranslucentBackground 导致黑色 tooltip 问题）
-  [9] 双击显示正则时 setWordWrap(True) + 解除固定高度，还原时恢复 fixedHeight(28)
-  [10] _CustomRuleRow 重写：统一风格（QWidget/28px/6px 边距），隐藏拖动图标保留功能，
-      所有 QLineEdit/QTextEdit 选中文字改为蓝底(#2563eb)白字(#fff)
-  [11] 自定义规则视觉修复：添加表头行，容器随行数撑大（无滚动条），
-      移除 grip 让复选框顶头对齐
-  [12] 撤回 _BuiltinRuleRow 误加的 _rx_sp/_del_sp 占位符和表头多余列
-  [13] 修复内置规则容器高度被挤压：bi_container 加 minHeight=130，PANEL_H 480→560
-  [14] 对齐内置/自定义规则列：Aa 列统一 fixedWidth=38
-  [15] (撤回) 恢复 _rx(".*") 正则切换 + 表头"正则"列(fixedWidth=32)
-  [17] 撤回内置规则行末 _end_sp(16px) 及表头 hdr_end — 不改内置规则布局
-  [16] 内置规则表头加全选框（默认勾选），批量启用/禁用全部内置规则
-  [18] 自定义规则表头添加 ? 帮助按钮（关键词规则 + 正则语法详解）
-  [19] _ColorBtn: 字体颜色按钮显示白底大写A+底部色条（letter=True）
-  [20] 默认字体颜色移至启用高亮上方，作为独立选项
-  [21] v0.6: closeEvent → reject()，支持 Windows 任务栏右键关闭
-  [22] _build_highlight_page: 外观/显示/高亮三组设置间添加 1px #e5e7eb 分隔线
-  [23] _build_log_page: 移除文件设置与 Tab 选择间的分隔线（不需要）
-  [24] _build_highlight_page: 分隔线上下各加 addSpacing(6) 增加留白
-  [25] PANEL_W 520→50，_hl_body 左右各缩进 10px，分隔线全宽、容器居中略窄，视觉对称
-  [26] 分隔线上下 addSpacing 6→12 统一边距，setFixedHeight 1→2（≈1.5px）统一厚度
-  [27] 行数上限改为 checkbox 无限制 + spinbox 联动（替代 specialValueText 方案）
-  [28] 新增 InfoPopup / ConfirmPopup 自定义弹窗（无标题栏/无图标/居中按钮）
-  [29] 设置新增「其他」页，含清空确认提示开关
-  [30] filter_manager: "历史"→"打开文件", tab_close_requested/hover_clear_requested 信号, _request_close_tab/force_close_tab
-  [31] main.py: Ctrl+W 关闭当前 Tab + _on_close_tab/_on_hover_clear 确认弹窗（含 confirm_close_tab 配置）
-  [32] settings Part 2: 其他页新增关闭确认(confirm_close_tab)开关; config.py 新增默认值
-  [33] filter_manager: _HoverIconBtn(24×24 paintEvent 圆形按钮) + hover bar(QGraphicsOpacityEffect 淡入200ms/淡出400ms)
-  [34] FilteredLogView: enterEvent/leaveEvent/set_closable/_update_hover_pos + resizeEvent hover bar 重定位
-  [35] RenamableTabBar: keyPressEvent Del 键 → tabCloseRequested 关闭非 main Tab
-  [36] Ctrl+G 跳转行号: FilteredLogView.goto_line + FilterManager.goto_line_current + main.py QAction(Ctrl+G) → QInputDialog.getInt
-  [37] 新增 InputIntPopup 自定义整数输入弹窗（替代 QInputDialog.getInt），延续 InfoPopup/ConfirmPopup 无标题栏遮罩风格
-  [38] InputIntPopup 改为非模态工具窗（有边框阴影+可拖动+WindowStaysOnTopHint），show()+value_accepted Signal
-  [39] 新增 InputTextPopup 模态文本输入弹窗（遮罩风格），替代自定义波特率 QInputDialog.getText
-  [40] 新增 _ShortcutEdit 按键捕获控件（点击后进入捕获模式，显示捕获到的按键序列）
-  [41] 新增 _ShortcutRow 快捷键行（标签 + 捕获框 + 重置按钮 + 冲突提示）
+最近更改 (v0.7):
+  [1] 删除已迁移类：_CloseBtn, _NavBtn, _ResetBtn, _GearIconLabel,
+      _CircleBtn, _BorderOverlay, _RoundedScrollContainer, _TagChip,
+      InfoPopup, ConfirmPopup, InputIntPopup, InputTextPopup
+  [2] 删除已迁移常量：PANEL_W/H, RADIUS, BORDER_COLOR, BG_COLOR,
+      OVERLAY_COLOR, _POPUP_FONT_SIZE, _CHK_SS, _RADIO_SS, _GEAR_SVG
+  [3] 新增 import: theme, widgets, popups
+  [4] 所有裸写颜色/字号改为引用 theme 常量
 """
 from __future__ import annotations
 
@@ -77,462 +37,56 @@ from highlight_engine import (
 )
 from color_picker import ColorPickerPopup
 
-PANEL_W = 550
-PANEL_H = 560
-RADIUS = 10
-BORDER_COLOR = QColor("#b0b8c4")
-BG_COLOR = QColor("#ffffff")
-OVERLAY_COLOR = QColor(0, 0, 0, 80)
-_POPUP_FONT_SIZE = 16  # 弹窗消息统一字号
-
-_CHK_SS = (
-    "QCheckBox { font-size: 13px; background: transparent;"
-    "  spacing: 5px; }"
-    "QCheckBox::indicator {"
-    "  width: 12px; height: 12px;"
-    "  margin: 2px; }"
-    "QCheckBox::indicator:unchecked {"
-    "  border: 1px solid #9ca3af;"
-    "  border-radius: 3px; background: #ffffff; }"
-    "QCheckBox::indicator:checked {"
-    "  border: 1px solid #2563eb;"
-    "  border-radius: 3px; background: #2563eb; }"
-    "QCheckBox::indicator:hover {"
-    "  border-color: #3b82f6; }"
-    "QCheckBox:disabled { color: #c0c0c0; }"
-    "QCheckBox::indicator:disabled {"
-    "  border-color: #d1d5db;"
-    "  background: #f0f0f0; }"
-    "QCheckBox::indicator:checked:disabled {"
-    "  border-color: #93b4f0;"
-    "  background: #93b4f0; }"
+# ★ v0.7: 从公共模块导入
+from theme import (
+    PANEL_W, PANEL_H, PANEL_RADIUS,
+    OVERLAY_COLOR as _OVERLAY_RGBA,
+    BG_PANEL, BG_HOVER, BG_PRESSED,
+    BG_SUBTLE, BG_SELECTED_ROW,
+    TEXT_PRIMARY, TEXT_DARK, TEXT_LOG,
+    TEXT_SECONDARY, TEXT_MUTED, TEXT_DISABLED,
+    BORDER_DEFAULT, BORDER_FOCUS, BORDER_LIGHT,
+    BORDER_PANEL,
+    PRIMARY, PRIMARY_HOVER, PRIMARY_PRESSED,
+    PRIMARY_LIGHT, PRIMARY_BG, PRIMARY_NAV,
+    ERROR, ERROR_BORDER, ERROR_BG,
+    ERROR_HOVER_BG, ERROR_PRESSED_BG, ERROR_DARK,
+    POPUP_FONT_SIZE, LABEL_FONT_SIZE,
+    SMALL_FONT_SIZE, TINY_FONT_SIZE,
+    HEADER_FONT_SIZE, SEPARATOR_SPACING,
+    checkbox_ss, radio_ss, mini_checkbox_ss,
+    line_edit_ss, separator_ss,
+    header_label_ss, section_label_ss,
+    borderless_btn_ss, primary_btn_ss, cancel_btn_ss,
+)
+from widgets import (
+    CloseBtn as _CloseBtn,
+    CircleBtn as _CircleBtn,
+    NavBtn as _NavBtn,
+    ResetBtn as _ResetBtn,
+    TagChip as _TagChip,
+    GearIconLabel as _GearIconLabel,
+    RoundedScrollContainer as _RoundedScrollContainer,
+    ArrowScrollBar as _ArrowScrollBar,
+    make_separator,
+)
+from popups import (
+    InfoPopup, ConfirmPopup,
+    InputIntPopup, InputTextPopup,
 )
 
-_RADIO_SS = (
-    "QRadioButton { font-size: 13px;"
-    "  background: transparent; spacing: 4px; }"
-    "QRadioButton::indicator {"
-    "  width: 10px; height: 10px;"
-    "  margin: 2px; }"
-    "QRadioButton::indicator:unchecked {"
-    "  border: 1px solid #9ca3af;"
-    "  border-radius: 5px;"
-    "  background: #ffffff; }"
-    "QRadioButton::indicator:checked {"
-    "  border: 1px solid #2563eb;"
-    "  border-radius: 5px;"
-    "  background: #2563eb; }"
-    "QRadioButton::indicator:hover {"
-    "  border-color: #3b82f6; }"
-    "QRadioButton:disabled { color: #c0c0c0; }"
-    "QRadioButton::indicator:disabled {"
-    "  border-color: #d1d5db;"
-    "  background: #f0f0f0; }"
-)
-
-# ★ v0.45: 圆角滚动容器（叠加层边框，保证四边统一）
-class _BorderOverlay(QWidget):
-    """透明叠加层 — 在所有子控件之上绘制边框"""
-
-    def __init__(self, parent, radius=6):
-        super().__init__(parent)
-        self._radius = radius
-        self._border_color = QColor("#d1d5db")
-        # ★ 不拦截鼠标事件，保证下层可点击
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
-        )
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground, True
-        )
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # ★ 1.5px pen — 更粗更均匀
-        r = QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
-        p.setPen(QPen(self._border_color, 1.5))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(r, self._radius, self._radius)
-        p.end()
-
-
-class _RoundedScrollContainer(QWidget):
-    """圆角滚动容器 — 背景在底层，边框在叠加层（保证四边统一）"""
-
-    def __init__(self, scroll_area: QScrollArea, parent=None):
-        super().__init__(parent)
-        self._scroll = scroll_area
-        self._radius = 6
-        self._bg_color = QColor("#ffffff")
-        # 内嵌 QScrollArea，去掉自身边框
-        self._scroll.setStyleSheet(
-            "QScrollArea { border: none; background: transparent; }"
-            "QScrollBar:vertical {"
-            "  width: 4px; background: transparent; }"
-            "QScrollBar::handle:vertical {"
-            "  background: #d1d5db;"
-            "  border-radius: 2px; }"
-            "QScrollBar::add-line, QScrollBar::sub-line {"
-            "  width: 0; height: 0; }"
-        )
-        self._scroll.viewport().setAutoFillBackground(False)
-        self._scroll.viewport().setStyleSheet(
-            "background: transparent;"
-        )
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(2, 2, 2, 2)
-        lay.setSpacing(0)
-        lay.addWidget(self._scroll)
-        # ★ 叠加层：在所有子控件之上绘制边框
-        self._overlay = _BorderOverlay(self, self._radius)
-        self._overlay.setGeometry(self.rect())
-        self._overlay.raise_()
-
-    def setMaximumHeight(self, h):
-        super().setMaximumHeight(h)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._overlay.setGeometry(self.rect())
-        self._overlay.raise_()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._overlay.setGeometry(self.rect())
-        self._overlay.raise_()
-
-    def paintEvent(self, event):
-        # ★ 只画背景，边框由 overlay 负责
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        bg_path = QPainterPath()
-        bg_path.addRoundedRect(r, self._radius, self._radius)
-        p.fillPath(bg_path, self._bg_color)
-        p.end()
-
-
-# ★ v0.45: 可切换列表项（圆形指示器替代 QCheckBox）
-class _TagChip(QWidget):
-    """列表选择项 — 圆形指示器 + 文字，无多选框"""
-    toggled = Signal(bool)
-
-    def __init__(self, text, parent=None):
-        super().__init__(parent)
-        self._text = text
-        self._checked = False
-        self._hovered = False
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self.setMouseTracking(True)
-        self.setFixedHeight(26)
-
-    def text(self):
-        return self._text
-
-    def isChecked(self):
-        return self._checked
-
-    def setChecked(self, checked):
-        if self._checked == checked:
-            return
-        self._checked = checked
-        self.update()
-        self.toggled.emit(checked)
-
-    def enterEvent(self, e):
-        self._hovered = True
-        self.update()
-        super().enterEvent(e)
-
-    def leaveEvent(self, e):
-        self._hovered = False
-        self.update()
-        super().leaveEvent(e)
-
-    def mousePressEvent(self, e):
-        if not self.isEnabled():
-            return
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.setChecked(not self._checked)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        h = self.height()
-        w = self.width()
-        # ★ disabled 状态：灰色文字，不画指示器
-        if not self.isEnabled():
-            font = p.font()
-            font.setPixelSize(12)
-            p.setFont(font)
-            p.setPen(QColor("#c0c0c0"))
-            p.drawText(
-                QRectF(16.0, 0, w - 16.0, h),
-                Qt.AlignmentFlag.AlignVCenter
-                | Qt.AlignmentFlag.AlignLeft,
-                self._text,
-            )
-            p.end()
-            return
-        if self._checked:
-            # ★ 选中：浅蓝底 + 左侧蓝色竖线
-            bg_path = QPainterPath()
-            bg_path.addRoundedRect(QRectF(0, 0, w, h), 4, 4)
-            p.fillPath(bg_path, QColor("#ffffff"))
-            bar_h = 14.0
-            bar_y = (h - bar_h) / 2.0
-            bar_path = QPainterPath()
-            bar_path.addRoundedRect(
-                QRectF(4, bar_y, 2.5, bar_h), 1.2, 1.2
-            )
-            p.fillPath(bar_path, QColor("#2563eb"))
-            fg = QColor("#2563eb")
-        else:
-            # ★ 未选中：hover 时浅灰底，否则透明
-            if self._hovered:
-                hover_path = QPainterPath()
-                hover_path.addRoundedRect(
-                    QRectF(0, 0, w, h), 4, 4
-                )
-                p.fillPath(hover_path, QColor("#f9fafb"))
-            fg = QColor("#6b7280")
-        # ★ 文字
-        font = p.font()
-        font.setPixelSize(12)
-        p.setFont(font)
-        p.setPen(fg)
-        text_x = 16.0
-        p.drawText(
-            QRectF(text_x, 0, w - text_x, h),
-            Qt.AlignmentFlag.AlignVCenter
-            | Qt.AlignmentFlag.AlignLeft,
-            self._text,
-        )
-        p.end()
-
-
-# ★ 齿轮 SVG（与 title_bar.py 一致）
-_GEAR_SVG = (
-    '<svg xmlns="http://www.w3.org/2000/svg" '
-    'width="16" height="16" viewBox="0 0 24 24" '
-    'fill="none" stroke="{color}" stroke-width="1.8" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 '
-    '1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73'
-    'l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51'
-    'a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 '
-    '2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 '
-    '1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 '
-    '0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 '
-    '2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 '
-    '1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 '
-    '.73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 '
-    '1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>'
-    '<circle cx="12" cy="12" r="3"/></svg>'
-)
-
-
-def _render_mini_gear(color: str, size: int = 14) -> QPixmap:
-    """渲染小齿轮图标用于设置标题栏"""
-    from PySide6.QtWidgets import QApplication
-    screen = QApplication.primaryScreen()
-    dpr = screen.devicePixelRatio() if screen else 1.0
-    real = int(size * dpr)
-    svg_data = _GEAR_SVG.format(color=color).encode("utf-8")
-    pixmap = QPixmap(real, real)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    pixmap.setDevicePixelRatio(dpr)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    renderer = QSvgRenderer(svg_data)
-    renderer.render(painter, QRectF(0, 0, size, size))
-    painter.end()
-    return pixmap
+# ★ v0.7: 常量别名（兼容 Part 2 引用）
+RADIUS = PANEL_RADIUS
+BORDER_COLOR = QColor(BORDER_PANEL)
+BG_COLOR = QColor(BG_PANEL)
+OVERLAY_COLOR = QColor(*_OVERLAY_RGBA)
+_CHK_SS = checkbox_ss()
+_RADIO_SS = radio_ss()
+_POPUP_FONT_SIZE = POPUP_FONT_SIZE
 
 
 # ═══════════════════════════════════════════
-# ★ 关闭按钮（与主窗口 close 按钮完全一致的绘制风格）
-# ═══════════════════════════════════════════
-class _CloseBtn(QWidget):
-    """Notion 风格关闭按钮 — 灰色×号 + hover浅灰背景，无红色"""
-    clicked = Signal()
-
-    def __init__(self, corner_radius=0, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(28, 28)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self.setMouseTracking(True)
-        self._hovered = False
-        self._pressed = False
-
-    def enterEvent(self, e):
-        self._hovered = True
-        self.update()
-        super().enterEvent(e)
-
-    def leaveEvent(self, e):
-        self._hovered = False
-        self._pressed = False
-        self.update()
-        super().leaveEvent(e)
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._pressed = True
-            self.update()
-        super().mousePressEvent(e)
-
-    def mouseReleaseEvent(self, e):
-        was_pressed = self._pressed
-        self._pressed = False
-        self.update()
-        if was_pressed and e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(e)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # ★ Notion 风格：hover 小圆圈背景
-        if self._pressed or self._hovered:
-            bg = QColor("#d2d2d2") if self._pressed else QColor("#e8e8e8")
-            cx, cy = self.width() / 2, self.height() / 2
-            radius = 11  # 小圆圈半径
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(bg)
-            p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
-        # ★ × 号
-        if self._pressed:
-            fg = QColor("#3c4043")
-        elif self._hovered:
-            fg = QColor("#5f6368")
-        else:
-            fg = QColor("#868686")
-        pen = QPen(fg, 1.0)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(pen)
-        cx, cy = self.width() / 2.0, self.height() / 2.0
-        d = 3.5
-        p.drawLine(
-            QPointF(cx - d, cy - d),
-            QPointF(cx + d, cy + d),
-        )
-        p.drawLine(
-            QPointF(cx + d, cy - d),
-            QPointF(cx - d, cy + d),
-        )
-        p.end()
-
-
-# ═══════════════════════════════════════════
-# 左侧导航按钮
-# ═══════════════════════════════════════════
-class _NavBtn(QPushButton):
-    def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        self.setCheckable(True)
-        self.setFixedHeight(34)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet(
-            "QPushButton { background: transparent; border: none;"
-            "  border-radius: 6px; text-align: left;"
-            "  padding: 0 12px; font-size: 13px; color: #374151; }"
-            "QPushButton:checked { background: #e0e7ff; color: #2563eb;"
-            "  font-weight: 600; }"
-            "QPushButton:hover:!checked { background: #f3f4f6; }"
-        )
-
-
-# ═══════════════════════════════════════════
-# 重置按钮
-# ═══════════════════════════════════════════
-class _ResetBtn(QPushButton):
-    """v0.45 — 无边框设计，hover/pressed 时才显示边框"""
-
-    def __init__(self, parent=None):
-        super().__init__("重置", parent)
-        self.setFixedSize(52, 30)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self.setMouseTracking(True)
-        self._hovered = False
-        self._pressed = False
-        self._apply_style()
-
-    def enterEvent(self, e):
-        self._hovered = True
-        self._apply_style()
-        super().enterEvent(e)
-
-    def leaveEvent(self, e):
-        self._hovered = False
-        self._pressed = False
-        self._apply_style()
-        super().leaveEvent(e)
-
-    def mousePressEvent(self, e):
-        self._pressed = True
-        self._apply_style()
-        super().mousePressEvent(e)
-
-    def mouseReleaseEvent(self, e):
-        self._pressed = False
-        self._apply_style()
-        super().mouseReleaseEvent(e)
-
-    def _apply_style(self):
-        if self._pressed:
-            self.setStyleSheet(
-                "QPushButton { background: #fecaca;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px; color: #b91c1c; }"
-            )
-        elif self._hovered:
-            self.setStyleSheet(
-                "QPushButton { background: #fee2e2;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px; color: #dc2626; }"
-            )
-        else:
-            self.setStyleSheet(
-                "QPushButton { background: transparent;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px; color: #6b7280; }"
-            )
-
-
-# ═══════════════════════════════════════════
-# ★ 齿轮图标 Label（用于设置标题栏左侧）
-# ═══════════════════════════════════════════
-class _GearIconLabel(QLabel):
-    """在标题栏左侧显示齿轮图标"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(32, 32)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        gear = _render_mini_gear("#6b7280", 14)
-        dpr = gear.devicePixelRatio()
-        lw = int(gear.width() / dpr)
-        lh = int(gear.height() / dpr)
-        x = (self.width() - lw) // 2
-        y = (self.height() - lh) // 2
-        p.drawPixmap(x, y, gear)
-        p.end()
-
-
-# ═══════════════════════════════════════════
-# ★ v0.5 新增：色块按钮（用于规则行的颜色选择）
+# ★ v0.5: 色块按钮（用于规则行的颜色选择）
 # ═══════════════════════════════════════════
 class _ColorBtn(QWidget):
     color_changed = Signal(str)
@@ -547,20 +101,16 @@ class _ColorBtn(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setMouseTracking(True)
 
-    def color(self):
-        return self._color
+    def color(self): return self._color
 
     def set_color(self, c):
-        self._color = c
-        self.update()
+        self._color = c; self.update()
 
     def enterEvent(self, e):
-        self._hovered = True
-        self.update()
+        self._hovered = True; self.update()
 
     def leaveEvent(self, e):
-        self._hovered = False
-        self.update()
+        self._hovered = False; self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -571,8 +121,7 @@ class _ColorBtn(QWidget):
             dlg.exec()
 
     def _on_pick(self, c):
-        self._color = c
-        self.update()
+        self._color = c; self.update()
         self.color_changed.emit(c)
 
     def paintEvent(self, event):
@@ -582,7 +131,6 @@ class _ColorBtn(QWidget):
         path = QPainterPath()
         path.addRoundedRect(r, 3, 3)
         if self._letter:
-            # ★ 无界风格：纯彩色 A，无边框无下划线
             font = p.font()
             font.setPixelSize(11)
             font.setBold(True)
@@ -594,14 +142,14 @@ class _ColorBtn(QWidget):
             )
         else:
             p.fillPath(path, QColor(self._color))
-            pen_c = "#9ca3af" if self._hovered else "#d1d5db"
+            pen_c = TEXT_MUTED if self._hovered else BORDER_DEFAULT
             p.setPen(QPen(QColor(pen_c), 1.0))
             p.drawRoundedRect(r, 3, 3)
         p.end()
 
 
 # ═══════════════════════════════════════════
-# ★ v0.5 新增：内置规则行
+# ★ v0.5: 内置规则行
 # ═══════════════════════════════════════════
 class _BuiltinRuleRow(QWidget):
     changed = Signal()
@@ -625,17 +173,7 @@ class _BuiltinRuleRow(QWidget):
         self._lbl = QLabel(rule["name"])
         h.addWidget(self._lbl, stretch=1)
         self._cs = QCheckBox("Aa")
-        self._cs.setStyleSheet(
-            "QCheckBox{font-size:11px;"
-            "font-family:Consolas,monospace;"
-            "background:transparent;spacing:3px}"
-            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
-            "QCheckBox::indicator:unchecked{"
-            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
-            "QCheckBox::indicator:checked{"
-            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
-            "QCheckBox::indicator:hover{border-color:#3b82f6}"
-        )
+        self._cs.setStyleSheet(mini_checkbox_ss())
         self._cs.setFixedWidth(38)
         self._cs.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._cs)
@@ -655,8 +193,7 @@ class _BuiltinRuleRow(QWidget):
         self._style_lbl()
 
     def _on_color(self, _=""):
-        self._style_lbl()
-        self.changed.emit()
+        self._style_lbl(); self.changed.emit()
 
     def _style_lbl(self):
         fg = self._fg_btn.color()
@@ -664,26 +201,25 @@ class _BuiltinRuleRow(QWidget):
         has_bg = bg and bg.lower() != "#ffffff"
         if has_bg:
             self._lbl.setStyleSheet(
-                f"font-size:12px;color:#1f2937;"
+                f"font-size:{SMALL_FONT_SIZE}px;color:{TEXT_DARK};"
                 f"background:{bg};border-radius:3px;padding:1px 4px;"
             )
         else:
             self._lbl.setStyleSheet(
-                f"font-size:12px;color:{fg};background:transparent;"
+                f"font-size:{SMALL_FONT_SIZE}px;color:{fg};"
+                "background:transparent;"
             )
 
-    def rule_id(self):
-        return self._id
+    def rule_id(self): return self._id
 
     def get_config(self):
         bg = self._bg_btn.color() or "#ffffff"
-        d = {
+        return {
             "enabled": self._chk.isChecked(),
             "case_sensitive": self._cs.isChecked(),
             "fg": self._fg_btn.color(),
             "bg": bg if bg.lower() != "#ffffff" else None,
         }
-        return d
 
     def reset(self):
         self._chk.setChecked(True)
@@ -693,9 +229,7 @@ class _BuiltinRuleRow(QWidget):
         self._style_lbl()
 
     def mouseDoubleClickEvent(self, event):
-        """双击：名称 ↔ 正则 就地切换，点击任意位置还原"""
-        if self._showing_pattern:
-            return
+        if self._showing_pattern: return
         self._showing_pattern = True
         self._lbl.setWordWrap(True)
         self.setMinimumHeight(28)
@@ -703,111 +237,28 @@ class _BuiltinRuleRow(QWidget):
         self._lbl.setText(self._pattern)
         self._lbl.setStyleSheet(
             "font-family:Consolas,monospace;"
-            "font-size:11px;color:#6b7280;"
-            "background:#f3f4f6;border-radius:3px;"
-            "padding:1px 4px;"
+            f"font-size:{TINY_FONT_SIZE}px;color:{TEXT_SECONDARY};"
+            f"background:{BG_HOVER};border-radius:3px;padding:1px 4px;"
         )
         QApplication.instance().installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        """监听全局点击，还原名称显示"""
-        if (
-            self._showing_pattern
-            and event.type() == QEvent.Type.MouseButtonPress
-        ):
+        if (self._showing_pattern
+                and event.type() == QEvent.Type.MouseButtonPress):
             self._showing_pattern = False
             self._lbl.setWordWrap(False)
             self.setFixedHeight(28)
             QApplication.instance().removeEventFilter(self)
             self._lbl.setText(
-                next(
-                    r["name"]
-                    for r in BUILTIN_RULES
-                    if r["id"] == self._id
-                )
+                next(r["name"] for r in BUILTIN_RULES
+                     if r["id"] == self._id)
             )
             self._style_lbl()
         return super().eventFilter(obj, event)
 
 
 # ═══════════════════════════════════════════
-# ★ 圆形 hover 按钮（paintEvent 绘制，不依赖 stylesheet）
-# ═══════════════════════════════════════════
-class _CircleBtn(QWidget):
-    """用 paintEvent + drawEllipse 绘制圆形 hover 背景，彻底解决 stylesheet 圆角失效"""
-    clicked = Signal()
-
-    def __init__(self, text, size=22, parent=None):
-        super().__init__(parent)
-        self._text = text
-        self._hovered = False
-        self._pressed = False
-        self._fg = "#9ca3af"
-        self._fg_hover = "#374151"
-        self._fg_pressed = "#1f2937"
-        self._bg_hover = "#f3f4f6"
-        self._bg_pressed = "#e5e7eb"
-        self._font_size = 16
-        self._font_weight = 700
-        self.setFixedSize(size, size)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self.setMouseTracking(True)
-
-    def enterEvent(self, e):
-        self._hovered = True
-        self.update()
-
-    def leaveEvent(self, e):
-        self._hovered = False
-        self._pressed = False
-        self.update()
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._pressed = True
-            self.update()
-
-    def mouseReleaseEvent(self, e):
-        was = self._pressed
-        self._pressed = False
-        self.update()
-        if was and e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        cx, cy = self.width() / 2.0, self.height() / 2.0
-        r = min(cx, cy)
-        if self._pressed:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(self._bg_pressed))
-            p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
-            fg = self._fg_pressed
-        elif self._hovered:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(self._bg_hover))
-            p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
-            fg = self._fg_hover
-        else:
-            fg = self._fg
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        font = p.font()
-        font.setPixelSize(self._font_size)
-        font.setBold(self._font_weight >= 600)
-        p.setFont(font)
-        p.setPen(QColor(fg))
-        p.drawText(
-            QRectF(0, 0, self.width(), self.height()),
-            Qt.AlignmentFlag.AlignCenter,
-            self._text,
-        )
-        p.end()
-
-
-# ═══════════════════════════════════════════
-# ★ v0.5 新增：自定义规则行
+# ★ v0.5: 自定义规则行
 # ═══════════════════════════════════════════
 class _CustomRuleRow(QWidget):
     changed = Signal()
@@ -829,47 +280,20 @@ class _CustomRuleRow(QWidget):
         self._kw = QLineEdit()
         self._kw.setPlaceholderText("关键词 / 正则")
         self._kw.setFixedHeight(23)
-        self._kw.setStyleSheet(
-            "QLineEdit{font-size:12px;color:#374151;"
-            "background:#fff;border:1.5px solid #d1d5db;"
-            "border-radius:6px;padding:0px 4px;"
-            "selection-background-color:#2563eb;"
-            "selection-color:#ffffff}"
-            "QLineEdit:focus{border-color:#3b82f6}"
-        )
+        self._kw.setStyleSheet(line_edit_ss())
         self._kw.textChanged.connect(lambda _: self.changed.emit())
         h.addWidget(self._kw, stretch=1)
         self._rx = QCheckBox(".*")
-        self._rx.setStyleSheet(
-            "QCheckBox{font-size:11px;"
-            "font-family:Consolas,monospace;"
-            "background:transparent;spacing:3px}"
-            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
-            "QCheckBox::indicator:unchecked{"
-            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
-            "QCheckBox::indicator:checked{"
-            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
-            "QCheckBox::indicator:hover{border-color:#3b82f6}"
-        )
+        self._rx.setStyleSheet(mini_checkbox_ss())
         self._rx.setFixedWidth(32)
         self._rx.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._rx)
         self._cs = QCheckBox("Aa")
-        self._cs.setStyleSheet(
-            "QCheckBox{font-size:11px;"
-            "font-family:Consolas,monospace;"
-            "background:transparent;spacing:3px}"
-            "QCheckBox::indicator{width:12px;height:12px;margin:2px}"
-            "QCheckBox::indicator:unchecked{"
-            "border:1px solid #9ca3af;border-radius:3px;background:#fff}"
-            "QCheckBox::indicator:checked{"
-            "border:1px solid #2563eb;border-radius:3px;background:#2563eb}"
-            "QCheckBox::indicator:hover{border-color:#3b82f6}"
-        )
+        self._cs.setStyleSheet(mini_checkbox_ss())
         self._cs.setFixedWidth(38)
         self._cs.toggled.connect(lambda _: self.changed.emit())
         h.addWidget(self._cs)
-        fg = (data or {}).get("fg", "#374151")
+        fg = (data or {}).get("fg", TEXT_PRIMARY)
         self._fg = _ColorBtn(fg, letter=True)
         self._fg.color_changed.connect(self.changed.emit)
         h.addWidget(self._fg)
@@ -878,11 +302,11 @@ class _CustomRuleRow(QWidget):
         self._bg.color_changed.connect(self.changed.emit)
         h.addWidget(self._bg)
         d = _CircleBtn("\u00d7", size=20)
-        d._fg = "#d1d5db"
-        d._fg_hover = "#dc2626"
-        d._fg_pressed = "#b91c1c"
-        d._bg_hover = "#fee2e2"
-        d._bg_pressed = "#fca5a5"
+        d._fg = BORDER_DEFAULT
+        d._fg_hover = ERROR
+        d._fg_pressed = ERROR_DARK
+        d._bg_hover = ERROR_HOVER_BG
+        d._bg_pressed = ERROR_PRESSED_BG
         d._font_size = 14
         d.clicked.connect(lambda: self.delete_me.emit(self))
         h.addWidget(d)
@@ -893,7 +317,6 @@ class _CustomRuleRow(QWidget):
             self._cs.setChecked(data.get("case_sensitive", False))
 
     def mousePressEvent(self, event):
-        """★ [11] 点击行空白区域发起拖动（Ctrl+点击多选）"""
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.position().toPoint())
             if child is None:
@@ -905,12 +328,8 @@ class _CustomRuleRow(QWidget):
                 return
         super().mousePressEvent(event)
 
-    def set_selected(self, s):
-        self._selected = s
-        self.update()
-
-    def is_selected(self):
-        return self._selected
+    def set_selected(self, s): self._selected = s; self.update()
+    def is_selected(self): return self._selected
 
     def get_data(self):
         bg = self._bg.color()
@@ -923,11 +342,8 @@ class _CustomRuleRow(QWidget):
             "bg": bg if bg.lower() != "#ffffff" else None,
         }
 
-    def set_fg(self, c):
-        self._fg.set_color(c)
-
-    def set_bg(self, c):
-        self._bg.set_color(c)
+    def set_fg(self, c): self._fg.set_color(c)
+    def set_bg(self, c): self._bg.set_color(c)
 
     def paintEvent(self, event):
         if self._selected:
@@ -935,13 +351,13 @@ class _CustomRuleRow(QWidget):
             p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             path = QPainterPath()
             path.addRoundedRect(QRectF(self.rect()), 4, 4)
-            p.fillPath(path, QColor("#eff6ff"))
+            p.fillPath(path, QColor(BG_SELECTED_ROW))
             p.end()
         super().paintEvent(event)
 
 
 # ═══════════════════════════════════════════
-# ★ v0.5 新增：自定义规则列表（拖动排序 + 多选 + 右键批量）
+# ★ v0.5: 自定义规则列表（拖动排序 + 多选 + 右键批量）
 # ═══════════════════════════════════════════
 class _CustomRuleList(QWidget):
     changed = Signal()
@@ -959,14 +375,12 @@ class _CustomRuleList(QWidget):
         self.customContextMenuRequested.connect(self._ctx)
 
     def _update_height(self):
-        """根据行数动态调整自身最小高度，让父容器跟着撑大"""
         n = len(self._rows)
-        self.setMinimumHeight(max(0, n * 30))  # 28px row + 2px spacing
-        self.updateGeometry()  # 通知父布局重新计算
+        self.setMinimumHeight(max(0, n * 30))
+        self.updateGeometry()
 
     def add_rule(self, data=None):
-        if len(self._rows) >= 200:
-            return
+        if len(self._rows) >= 200: return
         row = _CustomRuleRow(data)
         row.changed.connect(self.changed.emit)
         row.delete_me.connect(self._del)
@@ -989,22 +403,18 @@ class _CustomRuleList(QWidget):
         QApplication.instance().installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if self._drag_row is None:
-            return False
+        if self._drag_row is None: return False
         if event.type() == QEvent.Type.MouseMove:
             local = self.mapFromGlobal(QCursor.pos())
-            self._move(local.y())
-            return True
+            self._move(local.y()); return True
         if event.type() == QEvent.Type.MouseButtonRelease:
-            self._end_drag()
-            return True
+            self._end_drag(); return True
         return False
 
     def _move(self, y):
         di = self._rows.index(self._drag_row)
         for i, r in enumerate(self._rows):
-            if r is self._drag_row:
-                continue
+            if r is self._drag_row: continue
             mid = r.geometry().y() + r.height() // 2
             if (i < di and y < mid) or (i > di and y > mid):
                 self._rows.pop(di)
@@ -1022,15 +432,15 @@ class _CustomRuleList(QWidget):
 
     def _ctx(self, pos):
         sel = [r for r in self._rows if r.is_selected()]
-        if not sel:
-            return
+        if not sel: return
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu{background:#fff;border:1px solid #d1d5db;"
+            f"QMenu{{background:#fff;border:1px solid {BORDER_DEFAULT};"
             "border-radius:6px;padding:4px}"
-            "QMenu::item{padding:4px 16px;font-size:12px;"
+            f"QMenu::item{{padding:4px 16px;font-size:{SMALL_FONT_SIZE}px;"
             "border-radius:4px}"
-            "QMenu::item:selected{background:#eff6ff;color:#2563eb}"
+            f"QMenu::item:selected{{background:{BG_SELECTED_ROW};"
+            f"color:{PRIMARY}}}"
         )
         a_fg = menu.addAction(f"修改字体颜色（{len(sel)}条）")
         a_bg = menu.addAction(f"修改背景颜色（{len(sel)}条）")
@@ -1040,582 +450,27 @@ class _CustomRuleList(QWidget):
                 sel[0].get_data()["fg"], self.window()
             )
             if dlg.exec():
-                for r in sel:
-                    r.set_fg(dlg.get_color())
+                for r in sel: r.set_fg(dlg.get_color())
                 self.changed.emit()
         elif act == a_bg:
             bg0 = sel[0].get_data().get("bg") or "#ffffff"
             dlg = ColorPickerPopup(bg0, self.window())
             if dlg.exec():
-                for r in sel:
-                    r.set_bg(dlg.get_color())
+                for r in sel: r.set_bg(dlg.get_color())
                 self.changed.emit()
 
     def get_all(self):
         return [r.get_data() for r in self._rows]
 
     def clear_all(self):
-        for r in list(self._rows):
-            self._del(r)
+        for r in list(self._rows): self._del(r)
 
     def clear_selection(self):
-        for r in self._rows:
-            r.set_selected(False)
+        for r in self._rows: r.set_selected(False)
 
 
 # ═══════════════════════════════════════════
-# ★ v0.61 新增：自定义弹窗（替代 QMessageBox）
-# ═══════════════════════════════════════════
-class InfoPopup(QDialog):
-    """无标题栏、无图标的信息提示弹窗 — 确定按钮底部居中"""
-
-    def __init__(self, message, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.FramelessWindowHint
-        )
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            True,
-        )
-        self._pw = 280
-        self._panel = QWidget(self)
-        v = QVBoxLayout(self._panel)
-        v.setContentsMargins(20, 20, 20, 16)
-        v.setSpacing(16)
-        lbl = QLabel(message)
-        lbl.setWordWrap(True)
-        lbl.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        lbl.setStyleSheet(
-            f"font-size:{_POPUP_FONT_SIZE}px;color:#374151;"
-            "background:transparent;"
-        )
-        v.addWidget(lbl)
-        btn_ok = QPushButton("确定")
-        btn_ok.setFixedSize(72, 30)
-        btn_ok.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_ok.setStyleSheet(
-            "QPushButton{background:#2563eb;"
-            "border:none;border-radius:6px;"
-            "color:#fff;font-size:13px;"
-            "font-weight:600}"
-            "QPushButton:hover{background:#3b82f6}"
-            "QPushButton:pressed{background:#1d4ed8}"
-        )
-        btn_ok.clicked.connect(self.accept)
-        btn_h = QHBoxLayout()
-        btn_h.addStretch(1)
-        btn_h.addWidget(btn_ok)
-        btn_h.addStretch(1)
-        v.addLayout(btn_h)
-        self._panel.setFixedWidth(self._pw)
-        self._panel.adjustSize()
-        self._ph = self._panel.sizeHint().height()
-        self._panel.setFixedHeight(self._ph)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self.parent():
-            pw = self.parent()
-            self.resize(pw.size())
-            self.move(pw.mapToGlobal(QPoint(0, 0)))
-        self._panel.move(
-            (self.width() - self._pw) // 2,
-            (self.height() - self._ph) // 2,
-        )
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(
-            QPainter.RenderHint.Antialiasing, True
-        )
-        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
-        pr = QRectF(
-            self._panel.geometry()
-        ).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(pr, 8, 8)
-        p.fillPath(path, QColor("#ffffff"))
-        p.setPen(QPen(QColor("#d1d5db"), 1.0))
-        p.drawPath(path)
-        p.end()
-
-    def mousePressEvent(self, event):
-        if not self._panel.geometry().contains(
-            event.pos()
-        ):
-            self.accept()
-            return
-        super().mousePressEvent(event)
-
-
-class InputIntPopup(QDialog):
-    """非模态整数输入弹窗 — 有边框阴影、可拖动、置顶不阻塞
-    ★ v0.62: show() + value_accepted Signal"""
-    value_accepted = Signal(int)
-
-    def __init__(self, message, value=1, min_val=1,
-                 max_val=99999, btn_text="确定",
-                 parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            True,
-        )
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_DeleteOnClose, True,
-        )
-        self._drag_pos = None
-        self._sd = 8
-        self._pw = 260
-        self._panel = QWidget(self)
-        v = QVBoxLayout(self._panel)
-        v.setContentsMargins(16, 10, 10, 12)
-        v.setSpacing(10)
-        # ── title row ──
-        title_h = QHBoxLayout()
-        title_h.setSpacing(4)
-        lbl = QLabel(message)
-        lbl.setStyleSheet(
-            "font-size:13px;color:#374151;"
-            "background:transparent;"
-            "font-weight:600;"
-        )
-        title_h.addWidget(lbl, stretch=1)
-        cb = _CloseBtn(parent=self._panel)
-        cb.setFixedSize(24, 24)
-        cb.clicked.connect(self.close)
-        title_h.addWidget(cb)
-        v.addLayout(title_h)
-        # ── spinbox ──
-        self._spin = QSpinBox()
-        self._spin.setRange(min_val, max_val)
-        self._spin.setValue(value)
-        self._spin.setFixedHeight(30)
-        self._spin.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        self._spin.setStyleSheet(
-            "QSpinBox{font-size:14px;color:#374151;"
-            "background:#fff;"
-            "border:1.5px solid #d1d5db;"
-            "border-radius:6px;padding:0 8px}"
-            "QSpinBox:focus{border-color:#3b82f6}"
-            "QSpinBox::up-button,"
-            "QSpinBox::down-button{"
-            "width:16px;border:none;"
-            "background:transparent}"
-        )
-        v.addWidget(self._spin)
-        # ── buttons ──
-        btn_h = QHBoxLayout()
-        btn_h.setSpacing(8)
-        btn_h.addStretch(1)
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedSize(60, 28)
-        btn_cancel.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_cancel.setStyleSheet(
-            "QPushButton{background:#fff;"
-            "border:1px solid #d1d5db;"
-            "border-radius:6px;color:#374151;"
-            "font-size:13px}"
-            "QPushButton:hover{background:#f3f4f6;"
-            "border-color:#9ca3af}"
-            "QPushButton:pressed{background:#e5e7eb}"
-        )
-        btn_cancel.clicked.connect(self.close)
-        btn_h.addWidget(btn_cancel)
-        btn_ok = QPushButton(btn_text)
-        btn_ok.setFixedSize(60, 28)
-        btn_ok.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_ok.setStyleSheet(
-            "QPushButton{background:#2563eb;"
-            "border:none;border-radius:6px;"
-            "color:#fff;font-size:13px;"
-            "font-weight:600}"
-            "QPushButton:hover{background:#3b82f6}"
-            "QPushButton:pressed{background:#1d4ed8}"
-        )
-        btn_ok.clicked.connect(self._on_accept)
-        btn_h.addWidget(btn_ok)
-        v.addLayout(btn_h)
-        # ── size ──
-        self._panel.setFixedWidth(self._pw)
-        self._panel.adjustSize()
-        self._ph = self._panel.sizeHint().height()
-        self._panel.setFixedHeight(self._ph)
-        self._panel.move(self._sd, self._sd)
-        self.setFixedSize(
-            self._pw + 2 * self._sd,
-            self._ph + 2 * self._sd,
-        )
-
-    def _on_accept(self):
-        self.value_accepted.emit(self._spin.value())
-        self.close()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self.parent():
-            pg = self.parent().geometry()
-            x = pg.x() + (
-                pg.width() - self.width()
-            ) // 2
-            y = pg.y() + (
-                pg.height() - self.height()
-            ) // 2
-            self.move(x, y)
-        self.activateWindow()
-        self._spin.setFocus()
-        self._spin.selectAll()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(
-            QPainter.RenderHint.Antialiasing, True
-        )
-        S = self._sd
-        pr = QRectF(S, S, self._pw, self._ph)
-        for i in range(S, 0, -1):
-            a = int(12 * (S - i + 1) / S)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(0, 0, 0, a))
-            r = pr.adjusted(-i, -i, i, i)
-            p.drawRoundedRect(
-                r, 8 + i * 0.5, 8 + i * 0.5
-            )
-        panel_r = pr.adjusted(
-            0.5, 0.5, -0.5, -0.5
-        )
-        path = QPainterPath()
-        path.addRoundedRect(panel_r, 8, 8)
-        p.fillPath(path, QColor("#ffffff"))
-        p.setPen(QPen(QColor("#d1d5db"), 1.0))
-        p.drawPath(path)
-        p.end()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            child = self.childAt(event.pos())
-            if (
-                child is None
-                or child is self._panel
-                or isinstance(child, QLabel)
-            ):
-                self._drag_pos = (
-                    event.globalPosition().toPoint()
-                    - self.pos()
-                )
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._drag_pos is not None:
-            self.move(
-                event.globalPosition().toPoint()
-                - self._drag_pos
-            )
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.close()
-        elif event.key() in (
-            Qt.Key.Key_Return, Qt.Key.Key_Enter
-        ):
-            self._on_accept()
-        else:
-            super().keyPressEvent(event)
-
-
-class InputTextPopup(QDialog):
-    """模态文本输入弹窗 — 延续 ConfirmPopup 遮罩风格"""
-
-    def __init__(self, message, text="", parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.FramelessWindowHint
-        )
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            True,
-        )
-        self._result_text = None
-        self._pw = 300
-        self._panel = QWidget(self)
-        v = QVBoxLayout(self._panel)
-        v.setContentsMargins(20, 20, 20, 16)
-        v.setSpacing(12)
-        lbl = QLabel(message)
-        lbl.setWordWrap(True)
-        lbl.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        lbl.setStyleSheet(
-            f"font-size:{_POPUP_FONT_SIZE}px;"
-            "color:#374151;"
-            "background:transparent;"
-        )
-        v.addWidget(lbl)
-        edit_h = QHBoxLayout()
-        edit_h.addStretch(1)
-        self._edit = QLineEdit()
-        self._edit.setText(text)
-        self._edit.setFixedSize(160, 32)
-        self._edit.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        self._edit.setStyleSheet(
-            "QLineEdit{font-size:14px;color:#374151;"
-            "background:#fff;"
-            "border:1.5px solid #d1d5db;"
-            "border-radius:6px;padding:0 8px}"
-            "QLineEdit:focus{border-color:#3b82f6}"
-        )
-        edit_h.addWidget(self._edit)
-        edit_h.addStretch(1)
-        v.addLayout(edit_h)
-        btn_h = QHBoxLayout()
-        btn_h.setSpacing(12)
-        btn_h.addStretch(1)
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedSize(72, 30)
-        btn_cancel.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_cancel.setStyleSheet(
-            "QPushButton{background:#fff;"
-            "border:1px solid #d1d5db;"
-            "border-radius:6px;color:#374151;"
-            "font-size:13px}"
-            "QPushButton:hover{background:#f3f4f6;"
-            "border-color:#9ca3af}"
-            "QPushButton:pressed{background:#e5e7eb}"
-        )
-        btn_cancel.clicked.connect(self.reject)
-        btn_h.addWidget(btn_cancel)
-        btn_ok = QPushButton("确定")
-        btn_ok.setFixedSize(72, 30)
-        btn_ok.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_ok.setStyleSheet(
-            "QPushButton{background:#2563eb;"
-            "border:none;border-radius:6px;"
-            "color:#fff;font-size:13px;"
-            "font-weight:600}"
-            "QPushButton:hover{background:#3b82f6}"
-            "QPushButton:pressed{background:#1d4ed8}"
-        )
-        btn_ok.clicked.connect(self._on_accept)
-        btn_h.addWidget(btn_ok)
-        btn_h.addStretch(1)
-        v.addLayout(btn_h)
-        self._panel.setFixedWidth(self._pw)
-        self._panel.adjustSize()
-        self._ph = self._panel.sizeHint().height()
-        self._panel.setFixedHeight(self._ph)
-
-    def _on_accept(self):
-        self._result_text = self._edit.text()
-        self.accept()
-
-    def get_text(self):
-        return self._result_text
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self.parent():
-            pw = self.parent()
-            self.resize(pw.size())
-            self.move(pw.mapToGlobal(QPoint(0, 0)))
-        self._panel.move(
-            (self.width() - self._pw) // 2,
-            (self.height() - self._ph) // 2,
-        )
-        self._edit.setFocus()
-        self._edit.selectAll()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(
-            QPainter.RenderHint.Antialiasing, True
-        )
-        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
-        pr = QRectF(
-            self._panel.geometry()
-        ).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(pr, 8, 8)
-        p.fillPath(path, QColor("#ffffff"))
-        p.setPen(QPen(QColor("#d1d5db"), 1.0))
-        p.drawPath(path)
-        p.end()
-
-    def mousePressEvent(self, event):
-        if not self._panel.geometry().contains(
-            event.pos()
-        ):
-            self.reject()
-            return
-        super().mousePressEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() in (
-            Qt.Key.Key_Return, Qt.Key.Key_Enter
-        ):
-            self._on_accept()
-        else:
-            super().keyPressEvent(event)
-
-
-class ConfirmPopup(QDialog):
-    """确认弹窗 — 可选"以后都不提示"复选框"""
-
-    def __init__(self, message, show_dont_ask=False,
-                 parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.Dialog
-            | Qt.WindowType.FramelessWindowHint
-        )
-        self.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            True,
-        )
-        self._dont_ask = False
-        self._pw = 300
-        self._panel = QWidget(self)
-        v = QVBoxLayout(self._panel)
-        v.setContentsMargins(20, 20, 20, 16)
-        v.setSpacing(12)
-        lbl = QLabel(message)
-        lbl.setWordWrap(True)
-        lbl.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        lbl.setStyleSheet(
-            f"font-size:{_POPUP_FONT_SIZE}px;color:#374151;"
-            "background:transparent;"
-        )
-        v.addWidget(lbl)
-        self._chk_dont_ask = None
-        if show_dont_ask:
-            self._chk_dont_ask = QCheckBox(
-                "以后都不提示"
-            )
-            self._chk_dont_ask.setStyleSheet(_CHK_SS)
-            chk_h = QHBoxLayout()
-            chk_h.addStretch(1)
-            chk_h.addWidget(self._chk_dont_ask)
-            chk_h.addStretch(1)
-            v.addLayout(chk_h)
-        btn_h = QHBoxLayout()
-        btn_h.setSpacing(12)
-        btn_h.addStretch(1)
-        btn_cancel = QPushButton("取消")
-        btn_cancel.setFixedSize(72, 30)
-        btn_cancel.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_cancel.setStyleSheet(
-            "QPushButton{background:#fff;"
-            "border:1px solid #d1d5db;"
-            "border-radius:6px;color:#374151;"
-            "font-size:13px}"
-            "QPushButton:hover{background:#f3f4f6;"
-            "border-color:#9ca3af}"
-            "QPushButton:pressed{background:#e5e7eb}"
-        )
-        btn_cancel.clicked.connect(self.reject)
-        btn_h.addWidget(btn_cancel)
-        btn_ok = QPushButton("确认")
-        btn_ok.setFixedSize(72, 30)
-        btn_ok.setCursor(
-            Qt.CursorShape.PointingHandCursor
-        )
-        btn_ok.setStyleSheet(
-            "QPushButton{background:#2563eb;"
-            "border:none;border-radius:6px;"
-            "color:#fff;font-size:13px;"
-            "font-weight:600}"
-            "QPushButton:hover{background:#3b82f6}"
-            "QPushButton:pressed{background:#1d4ed8}"
-        )
-        btn_ok.clicked.connect(self._on_accept)
-        btn_h.addWidget(btn_ok)
-        btn_h.addStretch(1)
-        v.addLayout(btn_h)
-        self._panel.setFixedWidth(self._pw)
-        self._panel.adjustSize()
-        self._ph = self._panel.sizeHint().height()
-        self._panel.setFixedHeight(self._ph)
-
-    def _on_accept(self):
-        if (self._chk_dont_ask
-                and self._chk_dont_ask.isChecked()):
-            self._dont_ask = True
-        self.accept()
-
-    def dont_ask_again(self):
-        return self._dont_ask
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self.parent():
-            pw = self.parent()
-            self.resize(pw.size())
-            self.move(pw.mapToGlobal(QPoint(0, 0)))
-        self._panel.move(
-            (self.width() - self._pw) // 2,
-            (self.height() - self._ph) // 2,
-        )
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(
-            QPainter.RenderHint.Antialiasing, True
-        )
-        p.fillRect(self.rect(), QColor(0, 0, 0, 80))
-        pr = QRectF(
-            self._panel.geometry()
-        ).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(pr, 8, 8)
-        p.fillPath(path, QColor("#ffffff"))
-        p.setPen(QPen(QColor("#d1d5db"), 1.0))
-        p.drawPath(path)
-        p.end()
-
-    def mousePressEvent(self, event):
-        if not self._panel.geometry().contains(
-            event.pos()
-        ):
-            self.reject()
-            return
-        super().mousePressEvent(event)
-
-
-# ═══════════════════════════════════════════
-# ★ v0.63: 快捷键捕获控件
+# ★ v0.69: 快捷键捕获控件
 # ═══════════════════════════════════════════
 class _ShortcutEdit(QWidget):
     """点击进入捕获模式，按下按键组合后记录并显示
@@ -1638,19 +493,14 @@ class _ShortcutEdit(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
 
-    def value(self):
-        return self._value
+    def value(self): return self._value
 
     def set_value(self, v):
-        self._value = v
-        self._capturing = False
-        self.update()
+        self._value = v; self._capturing = False; self.update()
 
-    def _icon_size(self):
-        return 18
+    def _icon_size(self): return 18
 
     def _reset_rect(self):
-        """↺ 重置按钮区域（左侧）"""
         s = self._icon_size()
         if self._show_clear():
             x = self.width() - s * 2 - 8
@@ -1659,7 +509,6 @@ class _ShortcutEdit(QWidget):
         return QRectF(x, (self.height() - s) / 2, s, s)
 
     def _clear_rect(self):
-        """x 清空按钮区域（右侧）"""
         s = self._icon_size()
         return QRectF(
             self.width() - s - 4,
@@ -1667,58 +516,42 @@ class _ShortcutEdit(QWidget):
         )
 
     def _show_clear(self):
-        return (
-            bool(self._value)
-            and not self._capturing
-        )
+        return bool(self._value) and not self._capturing
 
     def _show_reset(self):
-        return (
-            self._value != self._default
-            and not self._capturing
-        )
+        return self._value != self._default and not self._capturing
 
     def enterEvent(self, e):
-        self._hovered = True
-        self.update()
+        self._hovered = True; self.update()
 
     def leaveEvent(self, e):
-        self._hovered = False
-        self._reset_hovered = False
+        self._hovered = False; self._reset_hovered = False
         self.update()
 
     def mouseMoveEvent(self, e):
         pos = e.position()
         changed = False
-        # 重置按钮 hover
         if self._show_reset():
             rr = self._reset_rect()
             was = self._reset_hovered
             self._reset_hovered = rr.contains(pos)
-            if was != self._reset_hovered:
-                changed = True
+            if was != self._reset_hovered: changed = True
         else:
             if self._reset_hovered:
-                self._reset_hovered = False
-                changed = True
-        # 清空按钮 hover
+                self._reset_hovered = False; changed = True
         if self._show_clear():
             cr = self._clear_rect()
             was_c = self._clear_hovered
             self._clear_hovered = cr.contains(pos)
-            if was_c != self._clear_hovered:
-                changed = True
+            if was_c != self._clear_hovered: changed = True
         else:
             if self._clear_hovered:
-                self._clear_hovered = False
-                changed = True
-        if changed:
-            self.update()
+                self._clear_hovered = False; changed = True
+        if changed: self.update()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             pos = e.position()
-            # 点击清空按钮
             if (self._show_clear()
                     and self._clear_rect().contains(pos)):
                 self._value = ""
@@ -1727,95 +560,73 @@ class _ShortcutEdit(QWidget):
                 self.update()
                 self.shortcut_changed.emit("")
                 return
-            # 点击重置按钮
             if (self._show_reset()
                     and self._reset_rect().contains(pos)):
                 self._value = self._default
                 self._clear_hovered = False
                 self._reset_hovered = False
                 self.update()
-                self.shortcut_changed.emit(
-                    self._default
-                )
+                self.shortcut_changed.emit(self._default)
                 return
             self._capturing = True
-            self.setFocus()
-            self.update()
+            self.setFocus(); self.update()
 
     def focusOutEvent(self, e):
         if self._capturing:
-            self._capturing = False
-            self.update()
+            self._capturing = False; self.update()
         super().focusOutEvent(e)
 
     def keyPressEvent(self, event):
         if not self._capturing:
-            super().keyPressEvent(event)
-            return
+            super().keyPressEvent(event); return
         key = event.key()
-        if key in (
-            Qt.Key.Key_Control, Qt.Key.Key_Shift,
-            Qt.Key.Key_Alt, Qt.Key.Key_Meta,
-            Qt.Key.Key_unknown,
-        ):
+        if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift,
+                   Qt.Key.Key_Alt, Qt.Key.Key_Meta,
+                   Qt.Key.Key_unknown):
             return
         if key == Qt.Key.Key_Escape:
-            self._capturing = False
-            self.update()
-            return
-        # ★ v0.69: Backspace/Delete 清空快捷键
-        if key in (
-            Qt.Key.Key_Backspace, Qt.Key.Key_Delete,
-        ):
+            self._capturing = False; self.update(); return
+        if key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
             self._value = ""
-            self._capturing = False
-            self.update()
+            self._capturing = False; self.update()
             self.shortcut_changed.emit("")
-            event.accept()
-            return
+            event.accept(); return
         mods = event.modifiers()
         seq = QKeySequence(
             int(mods.value) | key
-        ).toString(
-            QKeySequence.SequenceFormat.NativeText
-        )
+        ).toString(QKeySequence.SequenceFormat.NativeText)
         if seq:
             self._value = seq
-            self._capturing = False
-            self.update()
+            self._capturing = False; self.update()
             self.shortcut_changed.emit(seq)
         event.accept()
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.setRenderHint(
-            QPainter.RenderHint.Antialiasing, True
-        )
-        r = QRectF(
-            0.5, 0.5, self.width() - 1, self.height() - 1
-        )
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        r = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
         if self._capturing:
-            border = QColor("#3b82f6")
-            bg = QColor("#eff6ff")
+            border = QColor(BORDER_FOCUS)
+            bg = QColor(PRIMARY_BG)
             text = "按键设置… (Esc取消/Del清空)"
-            text_color = QColor("#3b82f6")
+            text_color = QColor(PRIMARY)
         elif self._conflict:
-            border = QColor("#ef4444")
-            bg = QColor("#fef2f2")
+            border = QColor(ERROR_BORDER)
+            bg = QColor(ERROR_BG)
             text = self._value or "（未设置）"
-            text_color = QColor("#dc2626")
+            text_color = QColor(ERROR)
         elif self._hovered:
-            border = QColor("#9ca3af")
-            bg = QColor("#f9fafb")
+            border = QColor(TEXT_MUTED)
+            bg = QColor(BG_SUBTLE)
             text = self._value or "（未设置）"
-            text_color = QColor("#374151")
+            text_color = QColor(TEXT_PRIMARY)
         else:
-            border = QColor("#d1d5db")
-            bg = QColor("#ffffff")
+            border = QColor(BORDER_DEFAULT)
+            bg = QColor(BG_PANEL)
             text = self._value or "（未设置）"
             text_color = (
-                QColor("#374151") if self._value
-                else QColor("#9ca3af")
+                QColor(TEXT_PRIMARY) if self._value
+                else QColor(TEXT_MUTED)
             )
         path = QPainterPath()
         path.addRoundedRect(r, 6, 6)
@@ -1823,58 +634,51 @@ class _ShortcutEdit(QWidget):
         p.setPen(QPen(border, 1.5))
         p.drawPath(path)
         font = p.font()
-        font.setPixelSize(12)
+        font.setPixelSize(SMALL_FONT_SIZE)
         font.setFamily("Consolas")
         p.setFont(font)
         p.setPen(text_color)
-        # 计算文字右边界（给图标留空间）
-        n_icons = (1 if self._show_clear() else 0) + (1 if self._show_reset() else 0)
+        n_icons = ((1 if self._show_clear() else 0)
+                   + (1 if self._show_reset() else 0))
         text_r = self.width() - 8 - n_icons * (self._icon_size() + 2)
         p.drawText(
             QRectF(8, 0, text_r - 8, self.height()),
             Qt.AlignmentFlag.AlignVCenter
-            | Qt.AlignmentFlag.AlignLeft,
-            text,
+            | Qt.AlignmentFlag.AlignLeft, text,
         )
-        # ★ v0.69: 内置圆润图标按钮（× 清空 + ↺ 重置）
         icon_font = p.font()
-        icon_font.setPixelSize(13)
+        icon_font.setPixelSize(LABEL_FONT_SIZE)
         p.setFont(icon_font)
         if self._show_clear():
             cr = self._clear_rect()
             if self._clear_hovered:
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor("#fee2e2"))
+                p.setBrush(QColor(ERROR_HOVER_BG))
                 p.drawEllipse(cr)
-                p.setPen(QColor("#dc2626"))
+                p.setPen(QColor(ERROR))
             else:
-                p.setPen(QColor("#c0c0c0"))
-            p.drawText(
-                cr,
-                Qt.AlignmentFlag.AlignCenter,
-                "×",
-            )
+                p.setPen(QColor(TEXT_DISABLED))
+            cr_adj = QRectF(cr.x(), cr.y() - 1,
+                            cr.width(), cr.height())
+            p.drawText(cr_adj,
+                       Qt.AlignmentFlag.AlignCenter, "×")
         if self._show_reset():
             rr = self._reset_rect()
             if self._reset_hovered:
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor("#dbeafe"))
+                p.setBrush(QColor(PRIMARY_LIGHT))
                 p.drawEllipse(rr)
-                p.setPen(QColor("#2563eb"))
+                p.setPen(QColor(PRIMARY))
             else:
-                p.setPen(QColor("#c0c0c0"))
-            p.drawText(
-                rr,
-                Qt.AlignmentFlag.AlignCenter,
-                "↺",
-            )
+                p.setPen(QColor(TEXT_DISABLED))
+            p.drawText(rr,
+                       Qt.AlignmentFlag.AlignCenter, "↺")
         p.end()
 
 
 class _ShortcutRow(QWidget):
     """单行快捷键设置：标签 + 捕获框（内置重置）
-    冲突提示显示在行下方（红色小字，左侧对齐捕获框）
-    ★ v0.69: 重置按钮内置到捕获框 + 清空图标按钮"""
+    冲突提示显示在行下方（红色小字，左侧对齐捕获框）"""
     changed = Signal()
 
     def __init__(self, label, default_key, parent=None):
@@ -1883,7 +687,6 @@ class _ShortcutRow(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        # ── 主行：标签 + 捕获框 ──
         row = QWidget()
         row.setFixedHeight(34)
         h = QHBoxLayout(row)
@@ -1892,89 +695,39 @@ class _ShortcutRow(QWidget):
         lbl = QLabel(label)
         lbl.setFixedWidth(90)
         lbl.setStyleSheet(
-            "font-size:13px;color:#374151;"
+            f"font-size:{LABEL_FONT_SIZE}px;color:{TEXT_PRIMARY};"
             "background:transparent;"
         )
         h.addWidget(lbl)
-        self._edit = _ShortcutEdit(
-            default=default_key
-        )
+        self._edit = _ShortcutEdit(default=default_key)
         self._edit.set_value(default_key)
         self._edit.shortcut_changed.connect(
             lambda _: self.changed.emit()
         )
         h.addWidget(self._edit, stretch=1)
         outer.addWidget(row)
-        # ── 冲突提示（行下方，左侧 padding 对齐捕获框）──
         self._lbl_conflict = QLabel()
         self._lbl_conflict.setStyleSheet(
-            "font-size:11px;color:#dc2626;"
-            "background:transparent;"
-            "padding:0 0 2px 98px;"
+            f"font-size:{TINY_FONT_SIZE}px;color:{ERROR};"
+            "background:transparent;padding:0 0 2px 98px;"
         )
         self._lbl_conflict.hide()
         outer.addWidget(self._lbl_conflict)
 
-    def value(self):
-        return self._edit.value()
+    def value(self): return self._edit.value()
 
-    def set_value(self, v):
-        self._edit.set_value(v)
+    def set_value(self, v): self._edit.set_value(v)
 
     def set_conflict(self, msg=""):
-        """msg 为空=无冲突，非空=冲突描述"""
         has = bool(msg)
         self._lbl_conflict.setVisible(has)
-        if has:
-            self._lbl_conflict.setText(msg)
+        if has: self._lbl_conflict.setText(msg)
         self._edit._conflict = has
         self._edit.update()
 # ═══════════════════════════════════════════
 # ★ 带三角箭头的自定义滚动条
 # ═══════════════════════════════════════════
-class _ArrowScrollBar(QScrollBar):
-    """竖向滚动条 — 顶/底绘制三角箭头指示器"""
-
-    def __init__(self, parent=None):
-        super().__init__(Qt.Orientation.Vertical, parent)
-        self.setStyleSheet(
-            "QScrollBar:vertical{"
-            "  width:8px;background:transparent;"
-            "  margin:12px 0 12px 0}"
-            "QScrollBar::handle:vertical{"
-            "  background:#d1d5db;border-radius:3px;min-height:20px}"
-            "QScrollBar::handle:vertical:hover{background:#3b82f6}"
-            "QScrollBar::sub-line:vertical{height:10px;background:transparent}"
-            "QScrollBar::add-line:vertical{height:10px;background:transparent}"
-            "QScrollBar::add-page,QScrollBar::sub-page{background:transparent}"
-        )
-
-    def paintEvent(self, event):
-        if self.maximum() <= 0:
-            return  # 无需滚动时完全隐藏整个滚动条（保留占位）
-        super().paintEvent(event)
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#b0b8c4"))
-        w = self.width()
-        cx = w / 2.0
-        # ▲ 上三角
-        up = QPainterPath()
-        up.moveTo(cx, 2)
-        up.lineTo(cx + 3, 8)
-        up.lineTo(cx - 3, 8)
-        up.closeSubpath()
-        p.drawPath(up)
-        # ▼ 下三角
-        h = self.height()
-        dn = QPainterPath()
-        dn.moveTo(cx, h - 2)
-        dn.lineTo(cx + 3, h - 8)
-        dn.lineTo(cx - 3, h - 8)
-        dn.closeSubpath()
-        p.drawPath(dn)
-        p.end()
+# ★ v0.7: _ArrowScrollBar 已迁移到 widgets.py，通过 Part 1 的 import 导入
 
 
 # ═══════════════════════════════════════════
@@ -2173,7 +926,7 @@ class SettingsDialog(QDialog):
         top_h.addWidget(lbl_title)
 
         top_h.addStretch(1)
-        self._btn_close = _CloseBtn(corner_radius=RADIUS)
+        self._btn_close = _CloseBtn()  # v0.7: 新 CloseBtn 统一 drawLine 圆形 hover
         self._btn_close.clicked.connect(self.close)
         top_h.addWidget(
             self._btn_close,
